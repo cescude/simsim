@@ -37,7 +37,7 @@ const Definition = struct {
 
 export fn callback(conn: ?*c.mg_connection, ev: c_int, ev_data: ?*anyopaque, _: ?*anyopaque) void {
     if (ev == c.MG_EV_HTTP_MSG) {
-        if (wrapper(conn, ev_data)) {
+        if (handleHttpRequest(conn, ev_data)) {
             // Nothing to do!
         } else |err| {
             std.debug.print("Error: {}\n", .{err});
@@ -46,7 +46,7 @@ export fn callback(conn: ?*c.mg_connection, ev: c_int, ev_data: ?*anyopaque, _: 
     }
 }
 
-fn wrapper(_conn: ?*c.mg_connection, _data: ?*anyopaque) !void {
+fn handleHttpRequest(_conn: ?*c.mg_connection, _data: ?*anyopaque) !void {
     var file = try std.fs.cwd().openFile("payload", .{});
     defer file.close();
 
