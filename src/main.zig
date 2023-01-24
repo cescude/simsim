@@ -9,10 +9,6 @@ fn cast(comptime T: type, op: anytype) *T {
     return b;
 }
 
-fn toSlice(str: [*c]const u8, len: usize) []const u8 {
-    return str[0..len];
-}
-
 const Definition = struct {
     uri: []const u8 = undefined,
 
@@ -103,30 +99,42 @@ fn findDefinition(uri: []const u8, payload: []u8) !Definition {
         d.uri = trimmed0;
         found = std.mem.eql(u8, uri, d.uri);
         var delim: []const u8 = undefined;
+        var is_json = false;
+        var content_start: usize = undefined;
 
         // Read headers?
         while (lines.next()) |line| {
             var trimmed = std.mem.trim(u8, line, &std.ascii.whitespace);
-            if (std.mem.startsWith(u8, trimmed, "#")) continue;
+
+            if (std.mem.startsWith(u8, trimmed, "#")) {
+                continue;
+            }
+
             if (std.mem.startsWith(u8, trimmed, ">")) {
                 var hdr = std.mem.trim(u8, trimmed[1..], &std.ascii.whitespace);
                 try d.headers.append(hdr);
-            } else {
-                delim = trimmed;
+                continue;
+            }
+
+            // Found a json payload, go to the read content section...
+            // TODO: If no content-header contains application/json, add it in here!
+            if (std.mem.startsWith(u8, trimmed, "{")) {
+                content_start = lines.index.? - line.len - 1;
+                is_json = true;
                 break;
             }
+
+            // Found a delimeter, go to the read content section...
+            delim = trimmed;
+            content_start = lines.index.?;
+            is_json = false;
+            break;
         }
 
-        // Read content!
-        var content_start: usize = lines.index orelse payload.len;
-        while (lines.next()) |line| {
-            var trimmed = std.mem.trim(u8, line, &std.ascii.whitespace);
-            if (std.mem.eql(u8, delim, trimmed)) {
-                // Done w/ content
-                break;
-            }
-
-            d.body = payload[content_start .. lines.index orelse payload.len];
+        if (is_json) {
+            d.body = try readJsonContent(&lines, content_start);
+        } else {
+            d.body = try readDelimitedContent(&lines, delim, content_start);
         }
 
         if (found) {
@@ -137,6 +145,71 @@ fn findDefinition(uri: []const u8, payload: []u8) !Definition {
     }
 
     return error.notFound;
+}
+
+fn readJsonContent(_lines: *std.mem.SplitIterator(u8), json_start_offset: usize) ![]const u8 {
+    var lines = _lines;
+    const payload = lines.buffer;
+
+    const validate = std.json.validate;
+
+    if (validate(payload[json_start_offset .. lines.index orelse payload.len])) {
+        // We've already got a full, complete JSON payload
+        return payload[json_start_offset .. lines.index orelse payload.len];
+    }
+
+    // Still more of the JSON message to go!
+    while (lines.next()) |_| {
+        if (validate(payload[json_start_offset .. lines.index orelse payload.len])) {
+            return payload[json_start_offset .. lines.index orelse payload.len];
+        }
+    }
+
+    return error.UnterminatedJSONPayload;
+}
+
+test "movePastJsonContent" {
+    var payloads: [2][]const u8 =
+        .{
+        \\  { "one" :
+        \\ true, "two":
+        \\
+        \\ [false, false, "FALLSE!"]}
+        \\ Here's some other stuff
+        ,
+        \\ { "one": "two" }
+    };
+
+    for (payloads) |payload| {
+        var lines = std.mem.split(u8, payload, "\n");
+
+        var result = try readJsonContent(&lines, 0);
+        std.debug.print("foundjson={s}\n", .{result});
+    }
+}
+
+fn readDelimitedContent(_lines: *std.mem.SplitIterator(u8), delimeter: []const u8, payload_start_offset: usize) ![]const u8 {
+    var lines = _lines;
+    const payload = lines.buffer;
+
+    while (lines.next()) |line| {
+        var trimmed = std.mem.trim(u8, line, &std.ascii.whitespace);
+        if (std.mem.eql(u8, delimeter, trimmed)) {
+            return payload[payload_start_offset .. (lines.index orelse payload.len) - delimeter.len - 1];
+        }
+    }
+
+    return error.UnterminatedPayload;
+}
+
+test "json" {
+    var payload =
+        \\   { "one":true,
+        \\  "two":false
+        \\}
+    ;
+    std.debug.print("payload=\n{s}\n", .{payload});
+    std.debug.print("valid={}\n", .{std.json.validate(payload)});
 }
 
 pub fn main() void {

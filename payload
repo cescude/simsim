@@ -1,0 +1,29 @@
+/what
+> Content-type: application/json
+CONTENT
+Here we go!
+again...?
+CONTENT
+
+/json/one
+{ "one": ["two", "three"] }
+
+/json/multi
+> Content-type: application/ULTRA_JSON
+   {
+"one": true,
+"two": false
+}
+
+/what2/do/you
+# Here we go
+> hdr: one
+>hdr: two
+THIS
+What is the deal
+with cereal
+and that
+
+
+   cat, for real
+THIS

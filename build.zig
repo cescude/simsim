@@ -30,6 +30,10 @@ pub fn build(b: *std.build.Builder) void {
     run_step.dependOn(&run_cmd.step);
 
     const exe_tests = b.addTest("src/main.zig");
+    exe_tests.addIncludePath("extern/mongoose");
+    exe_tests.addIncludePath("/usr/include");
+    exe_tests.addCSourceFile("extern/mongoose/mongoose.c", &[_][]const u8{});
+    exe_tests.linkLibC();
     exe_tests.setTarget(target);
     exe_tests.setBuildMode(mode);
 
