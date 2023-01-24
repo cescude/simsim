@@ -16,53 +16,86 @@ fn toSlice(str: [*c]const u8, len: usize) []const u8 {
 const Definition = struct {
     uri: []const u8 = undefined,
 
-    num_guards: usize = 0,
-    guards: [20][]const u8 = undefined,
+    // num_guards: usize = 0,
+    // guards: [20][]const u8 = undefined,
 
-    num_headers: usize = 0,
-    headers: [20][]const u8 = undefined,
+    headers: std.ArrayList([]const u8) = undefined,
 
     body: ?[]const u8 = null,
+
+    alloc: std.mem.Allocator,
+
+    pub fn init(alloc: std.mem.Allocator) @This() {
+        return .{
+            .uri = undefined,
+            .headers = std.ArrayList([]const u8).init(alloc),
+            .body = null,
+            .alloc = alloc,
+        };
+    }
+
+    pub fn deinit(self: @This()) void {
+        self.headers.deinit();
+    }
 };
 
-var allocator = std.heap.c_allocator;
-
-export fn callback(mconn: ?*c.mg_connection, ev: c_int, ev_data: ?*anyopaque, _: ?*anyopaque) void {
+export fn callback(conn: ?*c.mg_connection, ev: c_int, ev_data: ?*anyopaque, _: ?*anyopaque) void {
     if (ev == c.MG_EV_HTTP_MSG) {
-        if (wrapper(mconn, ev_data)) |found| {
-            var body = found.body orelse "";
-            c.mg_http_reply(mconn, 200, "Content-Type: text/plain\r\n", "Found %*s", body.len, body.ptr);
-        } else |_| {
-            c.mg_http_reply(mconn, 404, "Content-Type: text/plain\r\n", "Not Found");
+        if (wrapper(conn, ev_data)) {
+            // Nothing to do!
+        } else |err| {
+            std.debug.print("Error: {}\n", .{err});
+            c.mg_http_reply(conn, 404, "Content-Type: text/plain\r\n", "Not Found");
         }
     }
 }
 
-fn wrapper(_conn: ?*c.mg_connection, _data: ?*anyopaque) !Definition {
+fn wrapper(_conn: ?*c.mg_connection, _data: ?*anyopaque) !void {
     var file = try std.fs.cwd().openFile("payload", .{});
     defer file.close();
-
-    var buffer = try file.readToEndAlloc(allocator, 1 << 30);
-    defer allocator.free(buffer);
 
     var conn = _conn orelse return error.NullConnection;
     var data = _data orelse return error.NullEvData;
 
-    return try findDefinition(buffer, conn, cast(c.mg_http_message, data));
+    var msg = cast(c.mg_http_message, data);
+    var uri = msg.uri.ptr[0..msg.uri.len];
+
+    var buffer = try file.readToEndAlloc(std.heap.c_allocator, 1 << 30);
+    defer std.heap.c_allocator.free(buffer);
+
+    var defn = try findDefinition(uri, buffer);
+    defer defn.deinit();
+
+    const status_line = "HTTP/1.1 200 OK\r\n";
+    _ = c.mg_send(conn, status_line, status_line.len);
+    for (defn.headers.items) |hdr| {
+        _ = c.mg_send(conn, hdr.ptr, hdr.len);
+        _ = c.mg_send(conn, "\r\n", 2);
+    }
+
+    var line_buf: [200]u8 = undefined;
+
+    if (defn.body) |body| {
+        var content_length = try std.fmt.bufPrint(&line_buf, "Content-Length: {d}\r\n", .{body.len});
+        _ = c.mg_send(conn, content_length.ptr, content_length.len);
+        _ = c.mg_send(conn, "\r\n", 2);
+        _ = c.mg_send(conn, body.ptr, body.len);
+    } else {
+        _ = c.mg_send(conn, "\r\n", 2);
+    }
+
+    std.debug.print("Matched: {s}\n", .{defn.uri});
 }
 
-fn findDefinition(_buf: []u8, _: *c.mg_connection, hm: *c.mg_http_message) !Definition {
-    var buf = _buf;
-
-    var d: Definition = .{};
-
-    const uri = toSlice(hm.uri.ptr, hm.uri.len);
+fn findDefinition(uri: []const u8, payload: []u8) !Definition {
     var found = false;
 
-    var lines = std.mem.split(u8, buf, "\n");
-    _ = lines.first(); // always skip the first line? Maybe we could stick a \n at buf[0]....
+    var lines = std.mem.split(u8, payload, "\n");
 
     while (lines.next()) |line0| {
+        var d: Definition = Definition.init(std.heap.c_allocator);
+        errdefer d.deinit();
+
         var trimmed0 = std.mem.trim(u8, line0, &std.ascii.whitespace);
         if (trimmed0.len == 0) continue;
         if (std.mem.startsWith(u8, trimmed0, "#")) continue;
@@ -76,8 +109,8 @@ fn findDefinition(_buf: []u8, _: *c.mg_connection, hm: *c.mg_http_message) !Defi
             var trimmed = std.mem.trim(u8, line, &std.ascii.whitespace);
             if (std.mem.startsWith(u8, trimmed, "#")) continue;
             if (std.mem.startsWith(u8, trimmed, ">")) {
-                d.headers[d.num_headers] = trimmed[0..];
-                d.num_headers += 1;
+                var hdr = std.mem.trim(u8, trimmed[1..], &std.ascii.whitespace);
+                try d.headers.append(hdr);
             } else {
                 delim = trimmed;
                 break;
@@ -85,23 +118,22 @@ fn findDefinition(_buf: []u8, _: *c.mg_connection, hm: *c.mg_http_message) !Defi
         }
 
         // Read content!
-        var content_start: usize = lines.index orelse buf.len;
+        var content_start: usize = lines.index orelse payload.len;
         while (lines.next()) |line| {
             var trimmed = std.mem.trim(u8, line, &std.ascii.whitespace);
-            std.debug.print(">>>> <{s}> == <{s}>, {}\n", .{ delim, trimmed, std.mem.eql(u8, delim, trimmed) });
-            std.debug.print("     line.len={}, trimmed.len={}\n", .{ line.len, trimmed.len });
             if (std.mem.eql(u8, delim, trimmed)) {
                 // Done w/ content
                 break;
             }
 
-            d.body = buf[content_start .. lines.index orelse buf.len];
+            d.body = payload[content_start .. lines.index orelse payload.len];
         }
 
         if (found) {
-            std.debug.print("found={}, uri={s}, content={?s}\n", .{ found, d.uri, d.body });
             return d;
         }
+
+        d.deinit();
     }
 
     return error.notFound;
@@ -119,11 +151,4 @@ pub fn main() void {
     while (true) {
         c.mg_mgr_poll(&mgr, 1000);
     }
-}
-
-test "simple test" {
-    var list = std.ArrayList(i32).init(std.testing.allocator);
-    defer list.deinit(); // try commenting this out and see if zig detects the memory leak!
-    try list.append(42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
 }
