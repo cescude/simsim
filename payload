@@ -1,5 +1,5 @@
 /what
-> Content-type: application/json
+> X-Header: ok
 CONTENT
 Here we go!
 again...?
@@ -27,3 +27,19 @@ and that
 
    cat, for real
 THIS
+
+/
+> Content-Type: text/html
+HTML
+<html>
+  <head><title>OK, so this is maybe taking things too far</title></head>
+  <body>
+    <ol>
+      <li><a href="/what">/what</a>
+      <li><a href="/what2/do/you">/what2/do/you</a>
+      <li><a href="/json/one">/json/one</a>
+      <li><a href="/json/multi">/json/multi</a>
+    <ol>
+  </body>
+</html>
+HTML

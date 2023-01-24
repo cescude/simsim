@@ -41,7 +41,7 @@ export fn callback(conn: ?*c.mg_connection, ev: c_int, ev_data: ?*anyopaque, _: 
             // Nothing to do!
         } else |err| {
             std.debug.print("Error: {}\n", .{err});
-            c.mg_http_reply(conn, 404, "Content-Type: text/plain\r\n", "Not Found");
+            c.mg_http_reply(conn, 404, "Content-Type: text/plain\r\n", "Nope");
         }
     }
 }
@@ -62,7 +62,7 @@ fn wrapper(_conn: ?*c.mg_connection, _data: ?*anyopaque) !void {
     var defn = try findDefinition(uri, buffer);
     defer defn.deinit();
 
-    const status_line = "HTTP/1.1 200 OK\r\n";
+    const status_line = "HTTP/1.1 200 OK\r\nConnection: close\r\n";
     _ = c.mg_send(conn, status_line, status_line.len);
     for (defn.headers.items) |hdr| {
         _ = c.mg_send(conn, hdr.ptr, hdr.len);
@@ -117,8 +117,20 @@ fn findDefinition(uri: []const u8, payload: []u8) !Definition {
             }
 
             // Found a json payload, go to the read content section...
-            // TODO: If no content-header contains application/json, add it in here!
             if (std.mem.startsWith(u8, trimmed, "{")) {
+
+                // Adds a JSON content-type header, if one hasn't already been
+                // specified:
+                for (d.headers.items) |hdr| {
+                    // TODO: Technically would match "Content-Type-2",
+                    // but maybe just don't do that for now?
+                    if (std.ascii.startsWithIgnoreCase(hdr, "content-type")) {
+                        break;
+                    }
+                } else {
+                    try d.headers.append("Content-Type: application/json");
+                }
+
                 content_start = lines.index.? - line.len - 1;
                 is_json = true;
                 break;
@@ -188,6 +200,16 @@ test "movePastJsonContent" {
     }
 }
 
+test "json validates with prefixed space" {
+    var payload =
+        \\   { "one":true,
+        \\  "two":false
+        \\}
+    ;
+    std.debug.print("payload=\n{s}\n", .{payload});
+    std.debug.print("valid={}\n", .{std.json.validate(payload)});
+}
+
 fn readDelimitedContent(_lines: *std.mem.SplitIterator(u8), delimeter: []const u8, payload_start_offset: usize) ![]const u8 {
     var lines = _lines;
     const payload = lines.buffer;
@@ -200,16 +222,6 @@ fn readDelimitedContent(_lines: *std.mem.SplitIterator(u8), delimeter: []const u
     }
 
     return error.UnterminatedPayload;
-}
-
-test "json" {
-    var payload =
-        \\   { "one":true,
-        \\  "two":false
-        \\}
-    ;
-    std.debug.print("payload=\n{s}\n", .{payload});
-    std.debug.print("valid={}\n", .{std.json.validate(payload)});
 }
 
 pub fn main() void {
