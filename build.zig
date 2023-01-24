@@ -1,5 +1,11 @@
 const std = @import("std");
 
+fn configCSources(step: *std.build.LibExeObjStep) void {
+    step.addIncludePath("extern/mongoose");
+    step.addCSourceFile("extern/mongoose/mongoose.c", &[_][]const u8{});
+    step.linkLibC();
+}
+
 pub fn build(b: *std.build.Builder) void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
@@ -12,10 +18,7 @@ pub fn build(b: *std.build.Builder) void {
     const mode = b.standardReleaseOptions();
 
     const exe = b.addExecutable("simsim", "src/main.zig");
-    exe.addIncludePath("extern/mongoose");
-    exe.addIncludePath("/usr/include");
-    exe.addCSourceFile("extern/mongoose/mongoose.c", &[_][]const u8{});
-    exe.linkLibC();
+    configCSources(exe);
     exe.setTarget(target);
     exe.setBuildMode(mode);
     exe.install();
@@ -30,10 +33,7 @@ pub fn build(b: *std.build.Builder) void {
     run_step.dependOn(&run_cmd.step);
 
     const exe_tests = b.addTest("src/main.zig");
-    exe_tests.addIncludePath("extern/mongoose");
-    exe_tests.addIncludePath("/usr/include");
-    exe_tests.addCSourceFile("extern/mongoose/mongoose.c", &[_][]const u8{});
-    exe_tests.linkLibC();
+    configCSources(exe_tests);
     exe_tests.setTarget(target);
     exe_tests.setBuildMode(mode);
 
