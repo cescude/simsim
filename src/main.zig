@@ -36,20 +36,22 @@ const Definition = struct {
     }
 };
 
-export fn callback(conn: ?*c.mg_connection, ev: c_int, ev_data: ?*anyopaque, _: ?*anyopaque) void {
+export fn callback(conn: ?*c.mg_connection, ev: c_int, ev_data: ?*anyopaque, files: ?*anyopaque) void {
     if (ev == c.MG_EV_HTTP_MSG) {
-        if (handleHttpRequest(conn, ev_data)) {
+        if (handleHttpRequest(conn, ev_data, files)) {
             // Nothing to do!
-        } else |err| {
-            std.debug.print("Error: {}\n", .{err});
-            c.mg_http_reply(conn, 404, "Content-Type: text/plain\r\n", "Nope");
+        } else |err| switch (err) {
+            error.NoMatch => {},
+            else => {
+                std.debug.print("Error: {}\n", .{err});
+                c.mg_http_reply(conn, 500, null, "");
+            },
         }
     }
 }
 
-fn handleHttpRequest(_conn: ?*c.mg_connection, _data: ?*anyopaque) !void {
-    var file = try std.fs.cwd().openFile("payload", .{});
-    defer file.close();
+fn handleHttpRequest(_conn: ?*c.mg_connection, _data: ?*anyopaque, _file_names: ?*anyopaque) !void {
+    var file_names = cast([][]const u8, _file_names orelse return error.NullFiles).*;
 
     var conn = _conn orelse return error.NullConnection;
     var data = _data orelse return error.NullEvData;
@@ -57,34 +59,48 @@ fn handleHttpRequest(_conn: ?*c.mg_connection, _data: ?*anyopaque) !void {
     var msg = cast(c.mg_http_message, data);
     var uri = msg.uri.ptr[0..msg.uri.len];
 
-    var buffer = try file.readToEndAlloc(std.heap.page_allocator, 1 << 30);
-    defer std.heap.page_allocator.free(buffer);
+    for (file_names) |file_name| {
+        var file = std.fs.cwd().openFile(file_name, .{}) catch |err| {
+            std.debug.print("Error opening file {s}, {}\n", .{ file_name, err });
+            continue;
+        };
+        defer file.close();
 
-    var defn = try findDefinition(uri, buffer);
-    defer defn.deinit();
+        var buffer = try file.readToEndAlloc(std.heap.page_allocator, 1 << 30);
+        defer std.heap.page_allocator.free(buffer);
 
-    const status_line = "HTTP/1.1 200 OK\r\nConnection: close\r\n";
-    _ = c.mg_send(conn, status_line, status_line.len);
-    for (defn.headers.items) |hdr| {
-        _ = c.mg_send(conn, hdr.ptr, hdr.len);
-        _ = c.mg_send(conn, "\r\n", 2);
+        var defn = try findDefinition(uri, buffer) orelse continue;
+        defer defn.deinit();
+
+        std.debug.print("Matched: {s}\n", .{defn.uri});
+
+        const status_line = "HTTP/1.1 200 OK\r\nConnection: close\r\n";
+        _ = c.mg_send(conn, status_line, status_line.len);
+        for (defn.headers.items) |hdr| {
+            _ = c.mg_send(conn, hdr.ptr, hdr.len);
+            _ = c.mg_send(conn, "\r\n", 2);
+        }
+
+        var line_buf: [200]u8 = undefined;
+
+        if (defn.body) |body| {
+            var content_length = try std.fmt.bufPrint(&line_buf, "Content-Length: {d}\r\n", .{body.len});
+            _ = c.mg_send(conn, content_length.ptr, content_length.len);
+            _ = c.mg_send(conn, "\r\n", 2);
+            _ = c.mg_send(conn, body.ptr, body.len);
+        } else {
+            _ = c.mg_send(conn, "\r\n", 2);
+        }
+
+        return;
     }
 
-    var line_buf: [200]u8 = undefined;
-
-    if (defn.body) |body| {
-        var content_length = try std.fmt.bufPrint(&line_buf, "Content-Length: {d}\r\n", .{body.len});
-        _ = c.mg_send(conn, content_length.ptr, content_length.len);
-        _ = c.mg_send(conn, "\r\n", 2);
-        _ = c.mg_send(conn, body.ptr, body.len);
-    } else {
-        _ = c.mg_send(conn, "\r\n", 2);
-    }
-
-    std.debug.print("Matched: {s}\n", .{defn.uri});
+    std.debug.print("No Match for {s}\n", .{uri});
+    c.mg_http_reply(conn, 404, null, "");
+    return error.NoMatch;
 }
 
-fn findDefinition(uri: []const u8, payload: []u8) !Definition {
+fn findDefinition(uri: []const u8, payload: []u8) !?Definition {
     var found = false;
 
     var lines = std.mem.split(u8, payload, "\n");
@@ -157,7 +173,7 @@ fn findDefinition(uri: []const u8, payload: []u8) !Definition {
         d.deinit();
     }
 
-    return error.notFound;
+    return null;
 }
 
 fn readJsonContent(_lines: *std.mem.SplitIterator(u8), json_start_offset: usize) ![]const u8 {
@@ -229,17 +245,20 @@ pub fn main() !void {
     var opts = zopts.init(std.heap.page_allocator);
     defer opts.deinit();
 
+    opts.name("simsim");
+    opts.summary(
+        \\Mocking HTTP server designed for simulating external APIs.
+    );
+
     var host: []const u8 = "localhost";
     var port: u16 = 8080;
-    var verbose = false;
     var files: [][]const u8 = undefined;
     var show_help = false;
 
-    try opts.flag(&host, .{ .name = "host", .short = 'h', .description = "Hostname or IP to listen on (defaults to localhost)" });
-    try opts.flag(&port, .{ .name = "port", .short = 'p', .description = "Port to listen on (defaults to 8080)" });
-    try opts.flag(&verbose, .{ .name = "verbose", .short = 'v' });
+    try opts.flag(&host, .{ .name = "host", .short = 'h', .description = "Hostname or IP to listen on (defaults to localhost)." });
+    try opts.flag(&port, .{ .name = "port", .short = 'p', .description = "Port to listen on (defaults to 8080)." });
     try opts.flag(&show_help, .{ .name = "help", .description = "Show this help message." });
-    try opts.extra(&files, .{ .placeholder = "[FILE]", .description = "Files containing payload definitions, processed in order (default is 'payload')" });
+    try opts.extra(&files, .{ .placeholder = "[FILE]", .description = "Files containing payload definitions, processed in order (default is 'payload')." });
 
     opts.parseOrDie();
 
@@ -247,17 +266,25 @@ pub fn main() !void {
         opts.printHelpAndDie();
     }
 
+    if (files.len == 0) {
+        var default_files_array = [_][]const u8{"payload"};
+        files = &default_files_array;
+    }
+
     var listen_buf = [_:0]u8{0} ** 200;
     var listen_addr = try std.fmt.bufPrint(&listen_buf, "http://{s}:{d}", .{ host, port });
 
     std.debug.print("Starting up the server at {s}\n", .{listen_addr});
+    for (files) |file| {
+        std.debug.print("Definitions pulled from {s}\n", .{file});
+    }
 
     var mgr: c.mg_mgr = undefined;
 
     c.mg_mgr_init(&mgr);
     defer c.mg_mgr_free(&mgr);
 
-    _ = c.mg_http_listen(&mgr, listen_addr.ptr, callback, &mgr);
+    _ = c.mg_http_listen(&mgr, listen_addr.ptr, callback, cast(anyopaque, &files));
     while (true) {
         c.mg_mgr_poll(&mgr, 1000);
     }
