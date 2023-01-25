@@ -365,7 +365,7 @@ const Action = enum {
 pub fn parseSlice(self: *ZOpts, argv: []const []const u8) Error!void {
     var no_more_flags = false;
     var num_positionals: usize = 0;
-    var extras_start_idx: ?usize = null;
+    var extras_start_idx: usize = 0;
 
     var idx: usize = 0;
     while (idx < argv.len) : (idx += 1) {
@@ -418,11 +418,7 @@ pub fn parseSlice(self: *ZOpts, argv: []const []const u8) Error!void {
     }
 
     if (self.extras_definition) |defn| {
-        if (extras_start_idx) |extras_idx| {
-            defn.ptr.* = self.values.items[extras_idx..];
-        } else {
-            defn.ptr.* = self.values.items[0..0];
-        }
+        defn.ptr.* = self.values.items[extras_start_idx..];
     }
 }
 
@@ -625,6 +621,7 @@ fn getFlagByShortName(flags: []FlagDefinition, flag_name: u8) ?FlagDefinition {
 }
 
 const expect = std.testing.expect;
+const expectEqual = std.testing.expectEqual;
 const expectEqualStrings = std.testing.expectEqualStrings;
 const expectError = std.testing.expectError;
 
@@ -1010,9 +1007,23 @@ test "Positional functionality" {
     try expect(flag1 == 1234);
     try expectEqualStrings("*.txt", arg0);
     try expect(arg1.? == 200000);
-    try expect(files.len == 2);
+    try expectEqual(@as(usize, 2), files.len);
     try expectEqualStrings("one.txt", files[0]);
     try expectEqualStrings("two.txt", files[1]);
+}
+
+test "Extras by themselves" {
+    var args = ZOpts.init(std.testing.allocator);
+    defer args.deinit();
+
+    var extras: [][]const u8 = undefined;
+
+    try args.extra(&extras, .{});
+
+    var argv = [_][]const u8{ "one", "two", "three" };
+    try args.parseSlice(argv[0..]);
+
+    try expectEqual(@as(usize, 3), extras.len);
 }
 
 test "Subcommand template" {
