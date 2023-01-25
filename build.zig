@@ -6,6 +6,12 @@ fn configCSources(step: *std.build.LibExeObjStep) void {
     step.linkLibC();
 }
 
+const zopts = std.build.Pkg{
+    .name = "zopts",
+    .source = .{ .path = "extern/zopts/src/zopts.zig" },
+    .dependencies = &[_]std.build.Pkg{},
+};
+
 pub fn build(b: *std.build.Builder) void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
@@ -19,6 +25,7 @@ pub fn build(b: *std.build.Builder) void {
 
     const exe = b.addExecutable("simsim", "src/main.zig");
     configCSources(exe);
+    exe.addPackage(zopts);
     exe.setTarget(target);
     exe.setBuildMode(mode);
     exe.install();

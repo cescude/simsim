@@ -1,4 +1,5 @@
 const std = @import("std");
+const zopts = @import("zopts");
 const c = @cImport({
     @cInclude("mongoose.h");
 });
@@ -56,8 +57,8 @@ fn handleHttpRequest(_conn: ?*c.mg_connection, _data: ?*anyopaque) !void {
     var msg = cast(c.mg_http_message, data);
     var uri = msg.uri.ptr[0..msg.uri.len];
 
-    var buffer = try file.readToEndAlloc(std.heap.c_allocator, 1 << 30);
-    defer std.heap.c_allocator.free(buffer);
+    var buffer = try file.readToEndAlloc(std.heap.page_allocator, 1 << 30);
+    defer std.heap.page_allocator.free(buffer);
 
     var defn = try findDefinition(uri, buffer);
     defer defn.deinit();
@@ -89,7 +90,7 @@ fn findDefinition(uri: []const u8, payload: []u8) !Definition {
     var lines = std.mem.split(u8, payload, "\n");
 
     while (lines.next()) |line0| {
-        var d: Definition = Definition.init(std.heap.c_allocator);
+        var d: Definition = Definition.init(std.heap.page_allocator);
         errdefer d.deinit();
 
         var trimmed0 = std.mem.trim(u8, line0, &std.ascii.whitespace);
@@ -224,15 +225,39 @@ fn readDelimitedContent(_lines: *std.mem.SplitIterator(u8), delimeter: []const u
     return error.UnterminatedPayload;
 }
 
-pub fn main() void {
-    std.debug.print("Starting up the server!\n", .{});
+pub fn main() !void {
+    var opts = zopts.init(std.heap.page_allocator);
+    defer opts.deinit();
+
+    var host: []const u8 = "localhost";
+    var port: u16 = 8080;
+    var verbose = false;
+    var files: [][]const u8 = undefined;
+    var show_help = false;
+
+    try opts.flag(&host, .{ .name = "host", .short = 'h', .description = "Hostname or IP to listen on (defaults to localhost)" });
+    try opts.flag(&port, .{ .name = "port", .short = 'p', .description = "Port to listen on (defaults to 8080)" });
+    try opts.flag(&verbose, .{ .name = "verbose", .short = 'v' });
+    try opts.flag(&show_help, .{ .name = "help", .description = "Show this help message." });
+    try opts.extra(&files, .{ .placeholder = "[FILE]", .description = "Files containing payload definitions, processed in order (default is 'payload')" });
+
+    opts.parseOrDie();
+
+    if (show_help) {
+        opts.printHelpAndDie();
+    }
+
+    var listen_buf = [_:0]u8{0} ** 200;
+    var listen_addr = try std.fmt.bufPrint(&listen_buf, "http://{s}:{d}", .{ host, port });
+
+    std.debug.print("Starting up the server at {s}\n", .{listen_addr});
 
     var mgr: c.mg_mgr = undefined;
 
     c.mg_mgr_init(&mgr);
     defer c.mg_mgr_free(&mgr);
 
-    _ = c.mg_http_listen(&mgr, "http://localhost:8080", callback, &mgr);
+    _ = c.mg_http_listen(&mgr, listen_addr.ptr, callback, &mgr);
     while (true) {
         c.mg_mgr_poll(&mgr, 1000);
     }
