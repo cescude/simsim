@@ -15,26 +15,23 @@ fn cast(comptime T: type, op: anytype) *T {
 
 const Definition = struct {
     uri: []const u8 = undefined,
-
-    // num_guards: usize = 0,
-    // guards: [20][]const u8 = undefined,
-
+    // guards: std.ArrayList([]const u8) = undefined,
     headers: std.ArrayList([]const u8) = undefined,
-
     body: ?[]const u8 = null,
+    allocator: std.mem.Allocator,
 
-    alloc: std.mem.Allocator,
-
-    pub fn init(alloc: std.mem.Allocator) @This() {
+    pub fn init(allocator: std.mem.Allocator) @This() {
         return .{
             .uri = undefined,
-            .headers = std.ArrayList([]const u8).init(alloc),
+            // .guards = std.ArrayList([]const u8).init(allocator),
+            .headers = std.ArrayList([]const u8).init(allocator),
             .body = null,
-            .alloc = alloc,
+            .allocator = allocator,
         };
     }
 
     pub fn deinit(self: @This()) void {
+        // self.guards.deinit();
         self.headers.deinit();
     }
 };
@@ -62,20 +59,26 @@ fn handleHttpRequest(_conn: ?*c.mg_connection, _data: ?*anyopaque, _file_names: 
     var msg = cast(c.mg_http_message, data);
     var uri = msg.uri.ptr[0..msg.uri.len];
 
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    var allocator = arena.allocator();
+
     for (file_names) |file_name| {
+        defer _ = arena.reset(std.heap.ArenaAllocator.ResetMode.retain_capacity);
+
         var file = std.fs.cwd().openFile(file_name, .{}) catch |err| {
             std.debug.print("Error opening file {s}, {}\n", .{ file_name, err });
             continue;
         };
         defer file.close();
 
-        var buffer = try file.readToEndAlloc(std.heap.page_allocator, 1 << 30);
-        defer std.heap.page_allocator.free(buffer);
+        var buffer = try file.readToEndAlloc(allocator, 1 << 30);
 
-        var lua = try Lua.init();
+        var lua = try Lua.init(allocator);
         defer lua.deinit();
 
-        var defn = try findDefinition(uri, buffer) orelse continue;
+        var defn = try findDefinition(allocator, uri, buffer, lua) orelse continue;
         defer defn.deinit();
 
         std.debug.print("Matched: {s}\n", .{defn.uri});
@@ -108,11 +111,13 @@ fn handleHttpRequest(_conn: ?*c.mg_connection, _data: ?*anyopaque, _file_names: 
 
 const Lua = struct {
     L: *c.lua_State,
+    allocator: std.mem.Allocator,
 
-    pub fn init() !@This() {
+    pub fn init(allocator: std.mem.Allocator) !@This() {
         var L = c.luaL_newstate() orelse return error.LuaInitFailure;
         return .{
             .L = L,
+            .allocator = allocator,
         };
     }
 
@@ -120,8 +125,13 @@ const Lua = struct {
         c.lua_close(self.L);
     }
 
-    pub fn eval(self: @This(), str: [:0]const u8) bool {
-        if (c.luaL_loadstring(self.L, str.ptr) != 0) {
+    pub fn eval(self: @This(), str: []const u8) bool {
+        var stmt = std.fmt.allocPrintZ(self.allocator, "return {s}", .{str}) catch {
+            return false;
+        };
+        defer self.allocator.free(stmt);
+
+        if (c.luaL_loadstring(self.L, stmt.ptr) != 0) {
             // std.debug.print("loadstring => {s}\n", .{c.lua_tolstring(self.L, -1, null)});
             return false;
         }
@@ -136,15 +146,15 @@ const Lua = struct {
 };
 
 test "lua scratch" {
-    var lua = try Lua.init();
+    var lua = try Lua.init(std.testing.allocator);
     defer lua.deinit();
 
     var cases = .{
-        .{ true, "return 2 + 1" },
-        .{ true, "return true" },
-        .{ true, "return 'some string'" },
-        .{ false, "return false" },
-        .{ false, "return null" },
+        .{ true, "2 + 1" },
+        .{ true, "true" },
+        .{ true, "'some string'" },
+        .{ false, "false" },
+        .{ false, "null" },
         .{ false, "invalid lua code?" },
     };
 
@@ -153,13 +163,13 @@ test "lua scratch" {
     }
 }
 
-fn findDefinition(uri: []const u8, payload: []u8) !?Definition {
+fn findDefinition(allocator: std.mem.Allocator, uri: []const u8, payload: []u8, lua: Lua) !?Definition {
     var found = false;
 
     var lines = std.mem.split(u8, payload, "\n");
 
     while (lines.next()) |line0| {
-        var d: Definition = Definition.init(std.heap.page_allocator);
+        var d: Definition = Definition.init(allocator);
         errdefer d.deinit();
 
         var trimmed0 = std.mem.trim(u8, line0, &std.ascii.whitespace);
@@ -177,6 +187,13 @@ fn findDefinition(uri: []const u8, payload: []u8) !?Definition {
             var trimmed = std.mem.trim(u8, line, &std.ascii.whitespace);
 
             if (std.mem.startsWith(u8, trimmed, "#")) {
+                continue;
+            }
+
+            if (std.mem.startsWith(u8, trimmed, "@")) {
+                found = found and lua.eval(trimmed[1..]);
+                // var grd = std.mem.trim(u8, trimmed[1..], &std.ascii.whitespace);
+                // try d.guards.append(grd);
                 continue;
             }
 

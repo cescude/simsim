@@ -6,6 +6,7 @@ again...?
 CONTENT
 
 /json/one
+@true
 { "one": ["two", "three"] }
 
 /json/multi
@@ -30,6 +31,7 @@ THIS
 
 /
 > Content-Type: text/html
+@ 1 == 2
 HTML
 <html>
   <head><title>OK, so this is maybe taking things too far</title></head>
