@@ -2,6 +2,9 @@ const std = @import("std");
 const zopts = @import("zopts");
 const c = @cImport({
     @cInclude("mongoose.h");
+    @cInclude("lua.h");
+    @cInclude("lauxlib.h");
+    @cInclude("lualib.h");
 });
 
 fn cast(comptime T: type, op: anytype) *T {
@@ -69,6 +72,9 @@ fn handleHttpRequest(_conn: ?*c.mg_connection, _data: ?*anyopaque, _file_names: 
         var buffer = try file.readToEndAlloc(std.heap.page_allocator, 1 << 30);
         defer std.heap.page_allocator.free(buffer);
 
+        var lua = try Lua.init();
+        defer lua.deinit();
+
         var defn = try findDefinition(uri, buffer) orelse continue;
         defer defn.deinit();
 
@@ -98,6 +104,53 @@ fn handleHttpRequest(_conn: ?*c.mg_connection, _data: ?*anyopaque, _file_names: 
     std.debug.print("No Match for {s}\n", .{uri});
     c.mg_http_reply(conn, 404, null, "");
     return error.NoMatch;
+}
+
+const Lua = struct {
+    L: *c.lua_State,
+
+    pub fn init() !@This() {
+        var L = c.luaL_newstate() orelse return error.LuaInitFailure;
+        return .{
+            .L = L,
+        };
+    }
+
+    pub fn deinit(self: @This()) void {
+        c.lua_close(self.L);
+    }
+
+    pub fn eval(self: @This(), str: [:0]const u8) bool {
+        if (c.luaL_loadstring(self.L, str.ptr) != 0) {
+            // std.debug.print("loadstring => {s}\n", .{c.lua_tolstring(self.L, -1, null)});
+            return false;
+        }
+
+        if (c.lua_pcallk(self.L, 0, c.LUA_MULTRET, 0, 0, null) != 0) {
+            // std.debug.print("pcallk => {s}\n", .{c.lua_tolstring(self.L, -1, null)});
+            return false;
+        }
+
+        return c.lua_toboolean(self.L, -1) != 0;
+    }
+};
+
+test "lua scratch" {
+    var lua = try Lua.init();
+    defer lua.deinit();
+
+    var cases = .{
+        .{ true, "return 2 + 1" },
+        .{ true, "return true" },
+        .{ true, "return 'some string'" },
+        .{ false, "return false" },
+        .{ false, "return null" },
+        .{ false, "invalid lua code?" },
+    };
+
+    inline for (cases) |case| {
+        try std.testing.expectEqual(case[0], lua.eval(case[1]));
+    }
 }
 
 fn findDefinition(uri: []const u8, payload: []u8) !?Definition {
@@ -213,7 +266,7 @@ test "movePastJsonContent" {
         var lines = std.mem.split(u8, payload, "\n");
 
         var result = try readJsonContent(&lines, 0);
-        std.debug.print("foundjson={s}\n", .{result});
+        _ = result;
     }
 }
 
@@ -223,8 +276,7 @@ test "json validates with prefixed space" {
         \\  "two":false
         \\}
     ;
-    std.debug.print("payload=\n{s}\n", .{payload});
-    std.debug.print("valid={}\n", .{std.json.validate(payload)});
+    try std.testing.expectEqual(true, std.json.validate(payload));
 }
 
 fn readDelimitedContent(_lines: *std.mem.SplitIterator(u8), delimeter: []const u8, payload_start_offset: usize) ![]const u8 {

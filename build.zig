@@ -3,6 +3,41 @@ const std = @import("std");
 fn configCSources(step: *std.build.LibExeObjStep) void {
     step.addIncludePath("extern/mongoose");
     step.addCSourceFile("extern/mongoose/mongoose.c", &[_][]const u8{});
+
+    step.addIncludePath("extern/lua-5.4.4/src");
+    step.addCSourceFile("extern/lua-5.4.4/src/lapi.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/lauxlib.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/lbaselib.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/lcode.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/lcorolib.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/lctype.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/ldblib.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/ldebug.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/ldo.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/ldump.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/lfunc.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/lgc.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/linit.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/liolib.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/llex.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/lmathlib.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/lmem.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/loadlib.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/lobject.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/lopcodes.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/loslib.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/lparser.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/lstate.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/lstring.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/lstrlib.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/ltable.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/ltablib.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/ltm.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/lundump.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/lutf8lib.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/lvm.c", &[_][]const u8{});
+    step.addCSourceFile("extern/lua-5.4.4/src/lzio.c", &[_][]const u8{});
+
     step.linkLibC();
 }
 
