@@ -78,7 +78,7 @@ fn handleHttpRequest(_conn: ?*c.mg_connection, _data: ?*anyopaque, _file_names: 
         var lua = try Lua.init(allocator);
         defer lua.deinit();
 
-        var defn = try findDefinition(allocator, uri, buffer, lua) orelse continue;
+        var defn = try findDefinition(allocator, uri, buffer, lua, msg.*) orelse continue;
         defer defn.deinit();
 
         std.debug.print("Matched: {s}\n", .{defn.uri});
@@ -113,8 +113,19 @@ const Lua = struct {
     L: *c.lua_State,
     allocator: std.mem.Allocator,
 
+    // export fn body(L: ?*c.lua_State) c_int {
+    //     c.lua_pushnumber(L, 12);
+    //     return 1;
+    // }
+
     pub fn init(allocator: std.mem.Allocator) !@This() {
         var L = c.luaL_newstate() orelse return error.LuaInitFailure;
+
+        c.luaL_openlibs(L);
+
+        // c.lua_pushcclosure(L, fff, 0);
+        // c.lua_setglobal(L, "fff");
+
         return .{
             .L = L,
             .allocator = allocator,
@@ -125,19 +136,34 @@ const Lua = struct {
         c.lua_close(self.L);
     }
 
-    pub fn eval(self: @This(), str: []const u8) bool {
+    // str: anytype is a bit of a hack? This lets me support both
+    // c.mg_str and []const u8 types, but I really only use it due to
+    // the fact that I can't specify c.mg_str in the argument for some
+    // reason.
+    fn setGlobal(self: @This(), name: [:0]const u8, str: anytype) void {
+        _ = c.lua_pushlstring(self.L, str.ptr, str.len);
+        c.lua_setglobal(self.L, name);
+    }
+
+    pub fn eval(self: @This(), str: []const u8, msg: c.mg_http_message) bool {
         var stmt = std.fmt.allocPrintZ(self.allocator, "return {s}", .{str}) catch {
             return false;
         };
         defer self.allocator.free(stmt);
 
+        self.setGlobal("method", msg.method);
+        self.setGlobal("uri", msg.uri);
+        self.setGlobal("query", msg.query);
+        self.setGlobal("proto", msg.proto);
+        self.setGlobal("body", msg.body);
+
         if (c.luaL_loadstring(self.L, stmt.ptr) != 0) {
-            // std.debug.print("loadstring => {s}\n", .{c.lua_tolstring(self.L, -1, null)});
+            std.debug.print("loadstring => {s}\n", .{c.lua_tolstring(self.L, -1, null)});
             return false;
         }
 
         if (c.lua_pcallk(self.L, 0, c.LUA_MULTRET, 0, 0, null) != 0) {
-            // std.debug.print("pcallk => {s}\n", .{c.lua_tolstring(self.L, -1, null)});
+            std.debug.print("pcallk => {s}\n", .{c.lua_tolstring(self.L, -1, null)});
             return false;
         }
 
@@ -163,7 +189,7 @@ test "lua scratch" {
     }
 }
 
-fn findDefinition(allocator: std.mem.Allocator, uri: []const u8, payload: []u8, lua: Lua) !?Definition {
+fn findDefinition(allocator: std.mem.Allocator, uri: []const u8, payload: []u8, lua: Lua, msg: c.mg_http_message) !?Definition {
     var found = false;
 
     var lines = std.mem.split(u8, payload, "\n");
@@ -191,7 +217,7 @@ fn findDefinition(allocator: std.mem.Allocator, uri: []const u8, payload: []u8, 
             }
 
             if (std.mem.startsWith(u8, trimmed, "@")) {
-                found = found and lua.eval(trimmed[1..]);
+                found = found and lua.eval(std.mem.trim(u8, trimmed[1..], &std.ascii.whitespace), msg);
                 // var grd = std.mem.trim(u8, trimmed[1..], &std.ascii.whitespace);
                 // try d.guards.append(grd);
                 continue;

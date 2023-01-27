@@ -18,6 +18,9 @@ CONTENT
 
 /what2/do/you
 # Here we go
+@ string.sub(uri, -3, -1) == 'you'
+@ string.sub(uri, 1, 6) == '/what2'
+@ print(method, body)
 > hdr: one
 >hdr: two
 THIS
@@ -31,7 +34,7 @@ THIS
 
 /
 > Content-Type: text/html
-@ 1 == 2
+@ uri == '/'
 HTML
 <html>
   <head><title>OK, so this is maybe taking things too far</title></head>
