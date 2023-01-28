@@ -1,5 +1,5 @@
 const std = @import("std");
-const zopts = @import("zopts");
+const ZOpts = @import("zopts");
 const Lua = @import("lua.zig");
 
 const externs = @import("externs.zig");
@@ -128,6 +128,8 @@ fn findDefinition(allocator: std.mem.Allocator, uri: []const u8, payload: []u8, 
         while (lines.next()) |line| {
             var trimmed = std.mem.trim(u8, line, &std.ascii.whitespace);
 
+            if (trimmed.len == 0) continue;
+
             if (std.mem.startsWith(u8, trimmed, "#")) {
                 continue;
             }
@@ -210,8 +212,8 @@ fn readJsonContent(_lines: *std.mem.SplitIterator(u8), json_start_offset: usize)
 }
 
 test "movePastJsonContent" {
-    var payloads: [2][]const u8 =
-        .{
+    var payloads =
+        [_][]const u8{
         \\  { "one" :
         \\ true, "two":
         \\
@@ -219,6 +221,8 @@ test "movePastJsonContent" {
         \\ Here's some other stuff
         ,
         \\ { "one": "two" }
+        ,
+        "{\"one\":\n\"no ending newline\"}",
     };
 
     for (payloads) |payload| {
@@ -253,28 +257,28 @@ fn readDelimitedContent(_lines: *std.mem.SplitIterator(u8), delimeter: []const u
 }
 
 pub fn main() !void {
-    var opts = zopts.init(std.heap.page_allocator);
-    defer opts.deinit();
+    var zopts = ZOpts.init(std.heap.page_allocator);
+    defer zopts.deinit();
 
-    opts.name("simsim");
-    opts.summary(
+    zopts.name("simsim");
+    zopts.summary(
         \\Mocking HTTP server designed for simulating external APIs.
     );
 
     var host: []const u8 = "localhost";
-    var port: u16 = 8080;
+    var port: u16 = 3131;
     var files: [][]const u8 = undefined;
     var show_help = false;
 
-    try opts.flag(&host, .{ .name = "host", .short = 'h', .description = "Hostname or IP to listen on (defaults to localhost)." });
-    try opts.flag(&port, .{ .name = "port", .short = 'p', .description = "Port to listen on (defaults to 8080)." });
-    try opts.flag(&show_help, .{ .name = "help", .description = "Show this help message." });
-    try opts.extra(&files, .{ .placeholder = "[FILE]", .description = "Files containing payload definitions, processed in order (default is 'payload')." });
+    try zopts.flag(&host, .{ .name = "host", .short = 'h', .description = "Hostname or IP to listen on (defaults to localhost)." });
+    try zopts.flag(&port, .{ .name = "port", .short = 'p', .description = "Port to listen on (defaults to 3131)." });
+    try zopts.flag(&show_help, .{ .name = "help", .description = "Show this help message." });
+    try zopts.extra(&files, .{ .placeholder = "[FILE]", .description = "Files containing payload definitions, processed in order (default is 'payload')." });
 
-    opts.parseOrDie();
+    zopts.parseOrDie();
 
     if (show_help) {
-        opts.printHelpAndDie();
+        zopts.printHelpAndDie();
     }
 
     if (files.len == 0) {

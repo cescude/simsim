@@ -32,6 +32,23 @@ and that
    cat, for real
 THIS
 
+/rng
+
+# 50% change of tails! If this guard fails, we'll skip down to the next
+# definition which will definitely match...
+
+@math.random() < 0.5
+> Content-type: text/html
+HTML
+<p>Tails!</p>
+HTML
+
+/rng
+> Content-type: text/html
+HTML
+<p>Heads!</p>
+HTML
+
 /
 > Content-Type: text/html
 @ uri == '/'
@@ -44,6 +61,7 @@ HTML
       <li><a href="/what2/do/you">/what2/do/you</a>
       <li><a href="/json/one">/json/one</a>
       <li><a href="/json/multi">/json/multi</a>
+      <li><a href="/rng">FLip a cOIn!</a>
     <ol>
   </body>
 </html>
