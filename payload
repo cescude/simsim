@@ -48,3 +48,12 @@ HTML
   </body>
 </html>
 HTML
+
+/poster
+@ json
+@ json.ok == 'yep'
+@ #json.first > 1
+{ "ok" : true }
+
+/poster
+{ "ok" : false }

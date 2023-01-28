@@ -1,11 +1,10 @@
 const std = @import("std");
 const zopts = @import("zopts");
-const c = @cImport({
-    @cInclude("mongoose.h");
-    @cInclude("lua.h");
-    @cInclude("lauxlib.h");
-    @cInclude("lualib.h");
-});
+const Lua = @import("lua.zig");
+
+const externs = @import("externs.zig");
+const c = externs.c;
+const luajson = externs.lua_json;
 
 fn cast(comptime T: type, op: anytype) *T {
     const a = @ptrToInt(op);
@@ -15,7 +14,6 @@ fn cast(comptime T: type, op: anytype) *T {
 
 const Definition = struct {
     uri: []const u8 = undefined,
-    // guards: std.ArrayList([]const u8) = undefined,
     headers: std.ArrayList([]const u8) = undefined,
     body: ?[]const u8 = null,
     allocator: std.mem.Allocator,
@@ -23,7 +21,6 @@ const Definition = struct {
     pub fn init(allocator: std.mem.Allocator) @This() {
         return .{
             .uri = undefined,
-            // .guards = std.ArrayList([]const u8).init(allocator),
             .headers = std.ArrayList([]const u8).init(allocator),
             .body = null,
             .allocator = allocator,
@@ -31,7 +28,6 @@ const Definition = struct {
     }
 
     pub fn deinit(self: @This()) void {
-        // self.guards.deinit();
         self.headers.deinit();
     }
 };
@@ -107,86 +103,6 @@ fn handleHttpRequest(_conn: ?*c.mg_connection, _data: ?*anyopaque, _file_names: 
     std.debug.print("No Match for {s}\n", .{uri});
     c.mg_http_reply(conn, 404, null, "");
     return error.NoMatch;
-}
-
-const Lua = struct {
-    L: *c.lua_State,
-    allocator: std.mem.Allocator,
-
-    // export fn body(L: ?*c.lua_State) c_int {
-    //     c.lua_pushnumber(L, 12);
-    //     return 1;
-    // }
-
-    pub fn init(allocator: std.mem.Allocator) !@This() {
-        var L = c.luaL_newstate() orelse return error.LuaInitFailure;
-
-        c.luaL_openlibs(L);
-
-        // c.lua_pushcclosure(L, fff, 0);
-        // c.lua_setglobal(L, "fff");
-
-        return .{
-            .L = L,
-            .allocator = allocator,
-        };
-    }
-
-    pub fn deinit(self: @This()) void {
-        c.lua_close(self.L);
-    }
-
-    // str: anytype is a bit of a hack? This lets me support both
-    // c.mg_str and []const u8 types, but I really only use it due to
-    // the fact that I can't specify c.mg_str in the argument for some
-    // reason.
-    fn setGlobal(self: @This(), name: [:0]const u8, str: anytype) void {
-        _ = c.lua_pushlstring(self.L, str.ptr, str.len);
-        c.lua_setglobal(self.L, name);
-    }
-
-    pub fn eval(self: @This(), str: []const u8, msg: c.mg_http_message) bool {
-        var stmt = std.fmt.allocPrintZ(self.allocator, "return {s}", .{str}) catch {
-            return false;
-        };
-        defer self.allocator.free(stmt);
-
-        self.setGlobal("method", msg.method);
-        self.setGlobal("uri", msg.uri);
-        self.setGlobal("query", msg.query);
-        self.setGlobal("proto", msg.proto);
-        self.setGlobal("body", msg.body);
-
-        if (c.luaL_loadstring(self.L, stmt.ptr) != 0) {
-            std.debug.print("loadstring => {s}\n", .{c.lua_tolstring(self.L, -1, null)});
-            return false;
-        }
-
-        if (c.lua_pcallk(self.L, 0, c.LUA_MULTRET, 0, 0, null) != 0) {
-            std.debug.print("pcallk => {s}\n", .{c.lua_tolstring(self.L, -1, null)});
-            return false;
-        }
-
-        return c.lua_toboolean(self.L, -1) != 0;
-    }
-};
-
-test "lua scratch" {
-    var lua = try Lua.init(std.testing.allocator);
-    defer lua.deinit();
-
-    var cases = .{
-        .{ true, "2 + 1" },
-        .{ true, "true" },
-        .{ true, "'some string'" },
-        .{ false, "false" },
-        .{ false, "null" },
-        .{ false, "invalid lua code?" },
-    };
-
-    inline for (cases) |case| {
-        try std.testing.expectEqual(case[0], lua.eval(case[1]));
-    }
 }
 
 fn findDefinition(allocator: std.mem.Allocator, uri: []const u8, payload: []u8, lua: Lua, msg: c.mg_http_message) !?Definition {
