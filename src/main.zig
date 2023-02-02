@@ -4,7 +4,6 @@ const Lua = @import("lua.zig");
 
 const externs = @import("externs.zig");
 const c = externs.c;
-const luajson = externs.lua_json;
 
 fn cast(comptime T: type, op: anytype) *T {
     const a = @ptrToInt(op);
@@ -33,6 +32,8 @@ const Definition = struct {
 };
 
 export fn callback(conn: ?*c.mg_connection, ev: c_int, ev_data: ?*anyopaque, files: ?*anyopaque) void {
+    if (ev != c.MG_EV_POLL)
+        std.debug.print("MG_EV => {d}\n", .{ev});
     if (ev == c.MG_EV_HTTP_MSG) {
         if (handleHttpRequest(conn, ev_data, files)) {
             // Nothing to do!
@@ -42,6 +43,10 @@ export fn callback(conn: ?*c.mg_connection, ev: c_int, ev_data: ?*anyopaque, fil
                 std.debug.print("Error: {}\n", .{err});
                 c.mg_http_reply(conn, 500, null, "");
             },
+        }
+    } else if (ev == c.MG_EV_READ) {
+        if (conn) |cc| {
+            std.debug.print("MG_EV_READ: {} {s}\n", .{ cc.recv.len, cc.recv.buf[0..cc.recv.len] });
         }
     }
 }
@@ -61,6 +66,8 @@ fn handleHttpRequest(_conn: ?*c.mg_connection, _data: ?*anyopaque, _file_names: 
     var allocator = arena.allocator();
 
     for (file_names) |file_name| {
+        std.debug.print(">>>>> checking {s}\n", .{file_name});
+
         defer _ = arena.reset(std.heap.ArenaAllocator.ResetMode.retain_capacity);
 
         var file = std.fs.cwd().openFile(file_name, .{}) catch |err| {
@@ -79,7 +86,7 @@ fn handleHttpRequest(_conn: ?*c.mg_connection, _data: ?*anyopaque, _file_names: 
 
         std.debug.print("Matched: {s}\n", .{defn.uri});
 
-        const status_line = "HTTP/1.1 200 OK\r\nConnection: close\r\n";
+        const status_line = "HTTP/1.0 200 OK\r\n";
         _ = c.mg_send(conn, status_line, status_line.len);
         for (defn.headers.items) |hdr| {
             _ = c.mg_send(conn, hdr.ptr, hdr.len);
@@ -88,20 +95,20 @@ fn handleHttpRequest(_conn: ?*c.mg_connection, _data: ?*anyopaque, _file_names: 
 
         var line_buf: [200]u8 = undefined;
 
-        if (defn.body) |body| {
-            var content_length = try std.fmt.bufPrint(&line_buf, "Content-Length: {d}\r\n", .{body.len});
-            _ = c.mg_send(conn, content_length.ptr, content_length.len);
-            _ = c.mg_send(conn, "\r\n", 2);
-            _ = c.mg_send(conn, body.ptr, body.len);
-        } else {
-            _ = c.mg_send(conn, "\r\n", 2);
-        }
+        var body: []const u8 = defn.body orelse "";
+        // std.debug.print("<<<{s}>>> {}\n", .{ body, body.len });
+        var content_length = try std.fmt.bufPrint(&line_buf, "Content-Length: {d}\r\nConnection: keep-alive\r\n\r\n", .{body.len});
+        // var content_length = try std.fmt.bufPrint(&line_buf, "Content-Length: {d}\r\n\r\n", .{body.len});
+        _ = c.mg_send(conn, content_length.ptr, content_length.len);
+        _ = c.mg_send(conn, body.ptr, body.len);
 
         return;
     }
 
     std.debug.print("No Match for {s}\n", .{uri});
-    c.mg_http_reply(conn, 404, null, "");
+    // c.mg_http_reply(conn, 404, "Connection: close\r\n", "%s", "Not Found");
+    c.mg_http_reply(conn, 404, "", "%s", "Not Found");
+
     return error.NoMatch;
 }
 
@@ -162,20 +169,20 @@ fn findDefinition(allocator: std.mem.Allocator, uri: []const u8, payload: []u8, 
                     try d.headers.append("Content-Type: application/json");
                 }
 
-                content_start = lines.index.? - line.len - 1;
+                content_start = (lines.index orelse lines.buffer.len) - line.len - 1;
                 is_json = true;
                 break;
             }
 
             // Found a delimeter, go to the read content section...
             delim = trimmed;
-            content_start = lines.index.?;
+            content_start = (lines.index orelse lines.buffer.len);
             is_json = false;
             break;
         }
 
         if (is_json) {
-            d.body = try readJsonContent(&lines, content_start);
+            d.body = std.mem.trim(u8, try readJsonContent(&lines, content_start), &std.ascii.whitespace);
         } else {
             d.body = try readDelimitedContent(&lines, delim, content_start);
         }

@@ -54,7 +54,7 @@ HTML
 @ uri == '/'
 HTML
 <html>
-  <head><title>OK, so this is maybe taking things too far</title></head>
+  <head><title>OK, so this is may be taking things too far</title></head>
   <body>
     <ol>
       <li><a href="/what">/what</a>
@@ -75,3 +75,4 @@ HTML
 
 /poster
 { "ok" : false }
+
