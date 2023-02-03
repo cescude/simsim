@@ -70,9 +70,11 @@ HTML
 /poster
 @ json
 @ json.ok == 'yep'
-@ #json.first > 1
+@ json.first and #json.first > 1
 { "ok" : true }
 
 /poster
 { "ok" : false }
 
+/end
+> X-End-Header: whatever

@@ -32,8 +32,6 @@ const Definition = struct {
 };
 
 export fn callback(conn: ?*c.mg_connection, ev: c_int, ev_data: ?*anyopaque, files: ?*anyopaque) void {
-    if (ev != c.MG_EV_POLL)
-        std.debug.print("MG_EV => {d}\n", .{ev});
     if (ev == c.MG_EV_HTTP_MSG) {
         if (handleHttpRequest(conn, ev_data, files)) {
             // Nothing to do!
@@ -62,8 +60,6 @@ fn handleHttpRequest(_conn: ?*c.mg_connection, _data: ?*anyopaque, _file_names: 
     var allocator = arena.allocator();
 
     for (file_names) |file_name| {
-        std.debug.print(">>>>> checking {s}\n", .{file_name});
-
         defer _ = arena.reset(std.heap.ArenaAllocator.ResetMode.retain_capacity);
 
         var file = std.fs.cwd().openFile(file_name, .{}) catch |err| {
@@ -80,7 +76,11 @@ fn handleHttpRequest(_conn: ?*c.mg_connection, _data: ?*anyopaque, _file_names: 
         var defn = try findDefinition(allocator, uri, buffer, lua, msg.*) orelse continue;
         defer defn.deinit();
 
-        std.debug.print("Matched: {s}\n", .{defn.uri});
+        std.debug.print("Matched: {s}", .{defn.uri});
+        if (file_names.len > 1) {
+            std.debug.print(" ({s})", .{file_name});
+        }
+        std.debug.print("\n", .{});
 
         _ = c.mg_printf(conn, "HTTP/1.1 200 OK\r\n");
         for (defn.headers.items) |hdr| {
@@ -99,7 +99,7 @@ fn handleHttpRequest(_conn: ?*c.mg_connection, _data: ?*anyopaque, _file_names: 
     return error.NoMatch;
 }
 
-fn findDefinition(allocator: std.mem.Allocator, uri: []const u8, payload: []u8, lua: Lua, msg: c.mg_http_message) !?Definition {
+fn findDefinition(allocator: std.mem.Allocator, uri: []const u8, payload: []const u8, lua: Lua, msg: c.mg_http_message) !?Definition {
     var found = false;
 
     var lines = std.mem.split(u8, payload, "\n");
@@ -114,7 +114,7 @@ fn findDefinition(allocator: std.mem.Allocator, uri: []const u8, payload: []u8, 
 
         d.uri = trimmed0;
         found = std.mem.eql(u8, uri, d.uri);
-        var delim: []const u8 = undefined;
+        var delim: ?[]const u8 = null;
         var is_json = false;
         var content_start: usize = undefined;
 
@@ -130,8 +130,6 @@ fn findDefinition(allocator: std.mem.Allocator, uri: []const u8, payload: []u8, 
 
             if (std.mem.startsWith(u8, trimmed, "@")) {
                 found = found and lua.eval(std.mem.trim(u8, trimmed[1..], &std.ascii.whitespace), msg);
-                // var grd = std.mem.trim(u8, trimmed[1..], &std.ascii.whitespace);
-                // try d.guards.append(grd);
                 continue;
             }
 
@@ -144,12 +142,11 @@ fn findDefinition(allocator: std.mem.Allocator, uri: []const u8, payload: []u8, 
             // Found a json payload, go to the read content section...
             if (std.mem.startsWith(u8, trimmed, "{")) {
 
-                // Adds a JSON content-type header, if one hasn't already been
-                // specified:
+                // Adds a JSON content-type header if one hasn't
+                // already been specified:
                 for (d.headers.items) |hdr| {
-                    // TODO: Technically would match "Content-Type-2",
-                    // but maybe just don't do that for now?
-                    if (std.ascii.startsWithIgnoreCase(hdr, "content-type")) {
+                    var hdrator = std.mem.split(u8, hdr, ":");
+                    if (std.ascii.eqlIgnoreCase(hdrator.first(), "content-type")) {
                         break;
                     }
                 } else {
@@ -170,8 +167,8 @@ fn findDefinition(allocator: std.mem.Allocator, uri: []const u8, payload: []u8, 
 
         if (is_json) {
             d.body = std.mem.trim(u8, try readJsonContent(&lines, content_start), &std.ascii.whitespace);
-        } else {
-            d.body = try readDelimitedContent(&lines, delim, content_start);
+        } else if (delim) |_| {
+            d.body = try readDelimitedContent(&lines, delim.?, content_start);
         }
 
         if (found) {
