@@ -12,22 +12,40 @@ fn cast(comptime T: type, op: anytype) *T {
 }
 
 const Definition = struct {
-    uri: []const u8 = undefined,
-    headers: std.ArrayList([]const u8) = undefined,
-    body: ?[]const u8 = null,
+    uri: []const u8,
+    guards: std.ArrayList([]const u8),
+    headers: std.ArrayList([]const u8),
+    body: []const u8,
     allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator) @This() {
+    pub fn init(allocator: std.mem.Allocator, uri: []const u8) Definition {
         return .{
-            .uri = undefined,
+            .uri = uri,
+            .guards = std.ArrayList([]const u8).init(allocator),
             .headers = std.ArrayList([]const u8).init(allocator),
-            .body = null,
+            .body = "",
             .allocator = allocator,
         };
     }
 
-    pub fn deinit(self: @This()) void {
+    pub fn deinit(self: Definition) void {
+        self.guards.deinit();
         self.headers.deinit();
+    }
+
+    pub fn match(self: Definition, msg: c.mg_http_message) !bool {
+        if (!std.mem.eql(u8, self.uri, msg.uri.ptr[0..msg.uri.len])) {
+            return false;
+        }
+
+        var lua = try Lua.init(self.allocator);
+        defer lua.deinit();
+
+        for (self.guards.items) |grd| {
+            if (!lua.eval(grd, msg)) return false;
+        }
+
+        return true;
     }
 };
 
@@ -70,10 +88,7 @@ fn handleHttpRequest(_conn: ?*c.mg_connection, _data: ?*anyopaque, _file_names: 
 
         var buffer = try file.readToEndAlloc(allocator, 1 << 30);
 
-        var lua = try Lua.init(allocator);
-        defer lua.deinit();
-
-        var defn = try findDefinition(allocator, uri, buffer, lua, msg.*) orelse continue;
+        var defn = try findDefinition(allocator, buffer, msg.*) orelse continue;
         defer defn.deinit();
 
         std.debug.print("Matched: {s}", .{defn.uri});
@@ -86,9 +101,8 @@ fn handleHttpRequest(_conn: ?*c.mg_connection, _data: ?*anyopaque, _file_names: 
         for (defn.headers.items) |hdr| {
             _ = c.mg_printf(conn, "%.*s\r\n", hdr.len, hdr.ptr);
         }
-        var body = defn.body orelse "";
 
-        _ = c.mg_printf(conn, "Content-Length: %d\r\n\r\n%.*s", body.len, body.len, body.ptr);
+        _ = c.mg_printf(conn, "Content-Length: %d\r\n\r\n%.*s", defn.body.len, defn.body.len, defn.body.ptr);
         c.mg_finish_resp(conn);
         return;
     }
@@ -99,86 +113,87 @@ fn handleHttpRequest(_conn: ?*c.mg_connection, _data: ?*anyopaque, _file_names: 
     return error.NoMatch;
 }
 
-fn findDefinition(allocator: std.mem.Allocator, uri: []const u8, payload: []const u8, lua: Lua, msg: c.mg_http_message) !?Definition {
-    var found = false;
-
+fn findDefinition(allocator: std.mem.Allocator, payload: []const u8, msg: c.mg_http_message) !?Definition {
     var lines = std.mem.split(u8, payload, "\n");
 
-    while (lines.next()) |line0| {
-        var d: Definition = Definition.init(allocator);
-        errdefer d.deinit();
+    while (lines.next()) |line| {
+        var trimmed = std.mem.trim(u8, line, &std.ascii.whitespace);
+        if (trimmed.len == 0) continue;
+        if (std.mem.startsWith(u8, trimmed, "#")) continue;
 
-        var trimmed0 = std.mem.trim(u8, line0, &std.ascii.whitespace);
-        if (trimmed0.len == 0) continue;
-        if (std.mem.startsWith(u8, trimmed0, "#")) continue;
+        var defn: Definition = Definition.init(allocator, trimmed);
+        errdefer defn.deinit();
 
-        d.uri = trimmed0;
-        found = std.mem.eql(u8, uri, d.uri);
-        var delim: ?[]const u8 = null;
-        var is_json = false;
-        var content_start: usize = undefined;
+        try readDefinition(&defn, &lines);
 
-        // Read headers?
-        while (lines.next()) |line| {
-            var trimmed = std.mem.trim(u8, line, &std.ascii.whitespace);
-
-            if (trimmed.len == 0) continue;
-
-            if (std.mem.startsWith(u8, trimmed, "#")) {
-                continue;
-            }
-
-            if (std.mem.startsWith(u8, trimmed, "@")) {
-                found = found and lua.eval(std.mem.trim(u8, trimmed[1..], &std.ascii.whitespace), msg);
-                continue;
-            }
-
-            if (std.mem.startsWith(u8, trimmed, ">")) {
-                var hdr = std.mem.trim(u8, trimmed[1..], &std.ascii.whitespace);
-                try d.headers.append(hdr);
-                continue;
-            }
-
-            // Found a json payload, go to the read content section...
-            if (std.mem.startsWith(u8, trimmed, "{")) {
-
-                // Adds a JSON content-type header if one hasn't
-                // already been specified:
-                for (d.headers.items) |hdr| {
-                    var hdrator = std.mem.split(u8, hdr, ":");
-                    if (std.ascii.eqlIgnoreCase(hdrator.first(), "content-type")) {
-                        break;
-                    }
-                } else {
-                    try d.headers.append("Content-Type: application/json");
-                }
-
-                content_start = (lines.index orelse lines.buffer.len) - line.len - 1;
-                is_json = true;
+        // Add a Content-Type header (if one hasn't already been added)
+        for (defn.headers.items) |hdr| {
+            var hdrator = std.mem.split(u8, hdr, ":");
+            if (std.ascii.eqlIgnoreCase(hdrator.first(), "Content-Type")) {
                 break;
             }
-
-            // Found a delimeter, go to the read content section...
-            delim = trimmed;
-            content_start = (lines.index orelse lines.buffer.len);
-            is_json = false;
-            break;
+        } else {
+            if (std.mem.startsWith(u8, defn.body, "{")) {
+                try defn.headers.append("Content-Type: application/json");
+            }
         }
 
-        if (is_json) {
-            d.body = std.mem.trim(u8, try readJsonContent(&lines, content_start), &std.ascii.whitespace);
-        } else if (delim) |_| {
-            d.body = try readDelimitedContent(&lines, delim.?, content_start);
+        if (try defn.match(msg)) {
+            return defn;
         }
 
-        if (found) {
-            return d;
-        }
-
-        d.deinit();
+        defn.deinit();
     }
 
     return null;
+}
+
+fn readDefinition(defn: *Definition, lines: *std.mem.SplitIterator(u8)) !void {
+    var delim: ?[]const u8 = null;
+    var is_json = false;
+    var content_start: usize = undefined;
+
+    // Read headers?
+    while (lines.next()) |line| {
+        var trimmed = std.mem.trim(u8, line, &std.ascii.whitespace);
+
+        if (trimmed.len == 0) continue;
+
+        if (std.mem.startsWith(u8, trimmed, "#")) {
+            continue;
+        }
+
+        if (std.mem.startsWith(u8, trimmed, "@")) {
+            var grd = std.mem.trim(u8, trimmed[1..], &std.ascii.whitespace);
+            try defn.guards.append(grd);
+            continue;
+        }
+
+        if (std.mem.startsWith(u8, trimmed, ">")) {
+            var hdr = std.mem.trim(u8, trimmed[1..], &std.ascii.whitespace);
+            try defn.headers.append(hdr);
+            continue;
+        }
+
+        // Found a json payload, go to the read content section...
+        if (std.mem.startsWith(u8, trimmed, "{")) {
+            content_start = (lines.index orelse lines.buffer.len) - line.len - 1;
+            is_json = true;
+            break;
+        }
+
+        // Found a delimeter, go to the read content section...
+        delim = trimmed;
+        content_start = (lines.index orelse lines.buffer.len);
+        is_json = false;
+        break;
+    }
+
+    if (is_json) {
+        defn.body = std.mem.trim(u8, try readJsonContent(lines, content_start), &std.ascii.whitespace);
+    } else if (delim) |_| {
+        defn.body = try readDelimitedContent(lines, delim.?, content_start);
+    }
 }
 
 fn readJsonContent(_lines: *std.mem.SplitIterator(u8), json_start_offset: usize) ![]const u8 {
@@ -253,7 +268,7 @@ pub fn main() !void {
 
     zopts.name("simsim");
     zopts.summary(
-        \\Mocking HTTP server designed for simulating external APIs.
+        \\Maybe an easy HTTP server mocker.
     );
 
     var host: []const u8 = "localhost";
@@ -286,7 +301,6 @@ pub fn main() !void {
     }
 
     var mgr: c.mg_mgr = undefined;
-
     c.mg_mgr_init(&mgr);
     defer c.mg_mgr_free(&mgr);
 
