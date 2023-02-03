@@ -44,10 +44,6 @@ export fn callback(conn: ?*c.mg_connection, ev: c_int, ev_data: ?*anyopaque, fil
                 c.mg_http_reply(conn, 500, null, "");
             },
         }
-    } else if (ev == c.MG_EV_READ) {
-        if (conn) |cc| {
-            std.debug.print("MG_EV_READ: {} {s}\n", .{ cc.recv.len, cc.recv.buf[0..cc.recv.len] });
-        }
     }
 }
 
@@ -86,27 +82,18 @@ fn handleHttpRequest(_conn: ?*c.mg_connection, _data: ?*anyopaque, _file_names: 
 
         std.debug.print("Matched: {s}\n", .{defn.uri});
 
-        const status_line = "HTTP/1.0 200 OK\r\n";
-        _ = c.mg_send(conn, status_line, status_line.len);
+        _ = c.mg_printf(conn, "HTTP/1.1 200 OK\r\n");
         for (defn.headers.items) |hdr| {
-            _ = c.mg_send(conn, hdr.ptr, hdr.len);
-            _ = c.mg_send(conn, "\r\n", 2);
+            _ = c.mg_printf(conn, "%.*s\r\n", hdr.len, hdr.ptr);
         }
+        var body = defn.body orelse "";
 
-        var line_buf: [200]u8 = undefined;
-
-        var body: []const u8 = defn.body orelse "";
-        // std.debug.print("<<<{s}>>> {}\n", .{ body, body.len });
-        var content_length = try std.fmt.bufPrint(&line_buf, "Content-Length: {d}\r\nConnection: keep-alive\r\n\r\n", .{body.len});
-        // var content_length = try std.fmt.bufPrint(&line_buf, "Content-Length: {d}\r\n\r\n", .{body.len});
-        _ = c.mg_send(conn, content_length.ptr, content_length.len);
-        _ = c.mg_send(conn, body.ptr, body.len);
-
+        _ = c.mg_printf(conn, "Content-Length: %d\r\n\r\n%.*s", body.len, body.len, body.ptr);
+        c.mg_finish_resp(conn);
         return;
     }
 
     std.debug.print("No Match for {s}\n", .{uri});
-    // c.mg_http_reply(conn, 404, "Connection: close\r\n", "%s", "Not Found");
     c.mg_http_reply(conn, 404, "", "%s", "Not Found");
 
     return error.NoMatch;

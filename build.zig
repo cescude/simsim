@@ -4,6 +4,9 @@ fn configCSources(step: *std.build.LibExeObjStep) void {
     step.addIncludePath("extern/mongoose");
     step.addCSourceFile("extern/mongoose/mongoose.c", &[_][]const u8{});
 
+    step.addIncludePath("src/c/");
+    step.addCSourceFile("src/c/mext.c", &[_][]const u8{});
+
     step.addIncludePath("extern/lua-5.4.4/src");
     step.addCSourceFile("extern/lua-5.4.4/src/lapi.c", &[_][]const u8{});
     step.addCSourceFile("extern/lua-5.4.4/src/lauxlib.c", &[_][]const u8{});
