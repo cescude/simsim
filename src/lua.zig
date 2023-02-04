@@ -36,9 +36,6 @@ pub fn init(allocator: std.mem.Allocator) !@This() {
 
     c.luaL_openlibs(L);
 
-    // try exec(L, externs.lua_json_module);
-    // c.lua_setglobal(L, "json");
-
     return .{
         .L = L,
         .allocator = allocator,
@@ -70,6 +67,11 @@ pub fn eval(self: @This(), str: []const u8, msg: c.mg_http_message) bool {
     self.setGlobal("proto", msg.proto);
     self.setGlobal("body", msg.body);
 
+    for (msg.headers) |hdr| {
+        var hdr_name = toCamelCaseZ(200, hdr.name);
+        self.setGlobal(hdr_name, hdr.value);
+    }
+
     if (msg.body.ptr) |bodyptr| {
         const body = bodyptr[0..msg.body.len];
         if (std.json.validate(body)) {
@@ -82,6 +84,53 @@ pub fn eval(self: @This(), str: []const u8, msg: c.mg_http_message) bool {
     exec(self.L, stmt) catch return false;
 
     return c.lua_toboolean(self.L, -1) != 0;
+}
+
+fn toCamelCaseZ(comptime sz: usize, src: anytype) [:0]const u8 {
+    var dst: [sz:0]u8 = undefined;
+
+    var src_idx: usize = 0;
+    var dst_idx: usize = 0;
+
+    var make_upper = true;
+    while (src_idx < src.len and dst_idx < sz) {
+        switch (src.ptr[src_idx]) {
+            '-' => {
+                src_idx += 1;
+                make_upper = true;
+            },
+            else => {
+                if (make_upper) {
+                    dst[dst_idx] = std.ascii.toUpper(src.ptr[src_idx]);
+                    make_upper = false;
+                } else {
+                    dst[dst_idx] = std.ascii.toLower(src.ptr[src_idx]);
+                }
+
+                src_idx += 1;
+                dst_idx += 1;
+            },
+        }
+    }
+
+    dst[dst_idx] = 0;
+    return dst[0..dst_idx :0];
+}
+
+test "toCamelCaseZ" {
+    const results = [_][2][]const u8{
+        .{ "AbcDef" ** 10, "abc-def-" ** 10 },
+        .{ "AbcDef", "abc-DEF" },
+        .{ "AbcDef", "abc-def-" },
+        .{ "AbcDef", "abc--def--" },
+        .{ "Abcdef", "abcdef" },
+    };
+    for (results) |pair| {
+        var ccz = toCamelCaseZ(60, pair[1]);
+        // std.debug.print("\nok ccz={s}, ccz.len={}\n", .{ ccz, ccz.len });
+        try std.testing.expectEqual(pair[0].len, ccz.len);
+        try std.testing.expectEqualSlices(u8, pair[0], ccz);
+    }
 }
 
 // Leaves a lua table on the stack

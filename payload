@@ -74,7 +74,22 @@ HTML
 { "ok" : true }
 
 /poster
+@ json and json.ok == 'yep'
+{ "ok" : "almost" }
+
+/poster
 { "ok" : false }
+
+/header/test
+@ SomeCustomHeader == 'OK'
+{
+  "result" : "ok"
+}
+
+/header/test
+{
+  "result" : "NOPE"
+}
 
 /end
 > X-End-Header: whatever
