@@ -80,6 +80,12 @@ HTML
 /poster
 { "ok" : false }
 
+/xyz
+@ json and json['s p a c e s']
+HTML
+<html><body>HEY HEY HEY</body></html>
+HTML
+
 /header/test
 @ SomeCustomHeader == 'OK'
 {

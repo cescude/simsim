@@ -108,7 +108,7 @@ fn handleHttpRequest(_conn: ?*c.mg_connection, _data: ?*anyopaque, _file_names: 
     }
 
     std.debug.print("No Match for {s}\n", .{uri});
-    c.mg_http_reply(conn, 404, "", "%s", "Not Found");
+    c.mg_http_reply(conn, 404, "", "");
 
     return error.NoMatch;
 }

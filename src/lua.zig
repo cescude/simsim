@@ -67,10 +67,29 @@ pub fn eval(self: @This(), str: []const u8, msg: c.mg_http_message) bool {
     self.setGlobal("proto", msg.proto);
     self.setGlobal("body", msg.body);
 
+    // Create a "header" table (also "headers" in case of typos). Will
+    // create a key that perfectly matches the header
+    // (eg. `header['Content-type']`) as well as a camel case version
+    // that can be accessed without quotes (eg. `header.contentType`).
+
+    c.lua_createtable(self.L, 0, 0);
     for (msg.headers) |hdr| {
-        var hdr_name = toCamelCaseZ(200, hdr.name);
-        self.setGlobal(hdr_name, hdr.value);
+        if (hdr.name.ptr == null) continue;
+
+        var camelCaseName: [200:0]u8 = undefined;
+        toCamelCaseZ(&camelCaseName, hdr.name);
+
+        _ = c.lua_pushstring(self.L, &camelCaseName);
+        _ = c.lua_pushlstring(self.L, hdr.value.ptr, hdr.value.len);
+        c.lua_settable(self.L, -3);
+
+        _ = c.lua_pushlstring(self.L, hdr.name.ptr, hdr.name.len);
+        _ = c.lua_pushlstring(self.L, hdr.value.ptr, hdr.value.len);
+        c.lua_settable(self.L, -3);
     }
+    c.lua_pushvalue(self.L, -1); // duplicate top of stack
+    c.lua_setglobal(self.L, "header");
+    c.lua_setglobal(self.L, "headers");
 
     if (msg.body.ptr) |bodyptr| {
         const body = bodyptr[0..msg.body.len];
@@ -81,19 +100,19 @@ pub fn eval(self: @This(), str: []const u8, msg: c.mg_http_message) bool {
         }
     }
 
+    // TODO: add `form` variable for submitted form bodies
+
     exec(self.L, stmt) catch return false;
 
     return c.lua_toboolean(self.L, -1) != 0;
 }
 
-fn toCamelCaseZ(comptime sz: usize, src: anytype) [:0]const u8 {
-    var dst: [sz:0]u8 = undefined;
-
+fn toCamelCaseZ(dst: [:0]u8, src: anytype) void {
     var src_idx: usize = 0;
     var dst_idx: usize = 0;
 
-    var make_upper = true;
-    while (src_idx < src.len and dst_idx < sz) {
+    var make_upper = false; // first character isn't upcased
+    while (src_idx < src.len and dst_idx < dst.len) {
         switch (src.ptr[src_idx]) {
             '-' => {
                 src_idx += 1;
@@ -114,22 +133,22 @@ fn toCamelCaseZ(comptime sz: usize, src: anytype) [:0]const u8 {
     }
 
     dst[dst_idx] = 0;
-    return dst[0..dst_idx :0];
 }
 
 test "toCamelCaseZ" {
     const results = [_][2][]const u8{
-        .{ "AbcDef" ** 10, "abc-def-" ** 10 },
-        .{ "AbcDef", "abc-DEF" },
-        .{ "AbcDef", "abc-def-" },
-        .{ "AbcDef", "abc--def--" },
-        .{ "Abcdef", "abcdef" },
+        .{ "abcDef", "abc-def-" },
+        .{ "abcDef", "abc-DEF" },
+        .{ "abcDef", "abc-def-" },
+        .{ "abcDef", "abc--def--" },
+        .{ "abcdef", "abcdef" },
     };
+
     for (results) |pair| {
-        var ccz = toCamelCaseZ(60, pair[1]);
-        // std.debug.print("\nok ccz={s}, ccz.len={}\n", .{ ccz, ccz.len });
-        try std.testing.expectEqual(pair[0].len, ccz.len);
-        try std.testing.expectEqualSlices(u8, pair[0], ccz);
+        var ccz: [200:0]u8 = undefined;
+        toCamelCaseZ(&ccz, pair[1]);
+        try std.testing.expectEqual(pair[0].len, std.mem.indexOfSentinel(u8, 0, &ccz));
+        try std.testing.expectEqualSlices(u8, pair[0], ccz[0..pair[0].len]);
     }
 }
 

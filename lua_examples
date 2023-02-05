@@ -1,0 +1,12 @@
+/
+@headers['X-No-Cache'] == 'one'
+{"ok":1}
+
+/
+@headers.xNoCache == 'two'
+{"ok":2}
+
+/
+# just test for the presence of the header
+@header.xNoCache
+{"ok":"anything else!"}
