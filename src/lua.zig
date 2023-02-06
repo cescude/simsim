@@ -92,16 +92,22 @@ pub fn eval(self: @This(), str: []const u8, msg: c.mg_http_message) bool {
     c.lua_setglobal(self.L, "headers");
 
     if (msg.body.ptr) |bodyptr| {
+        const top = c.lua_gettop(self.L);
         const body = bodyptr[0..msg.body.len];
-        if (std.json.validate(body)) {
-            if (parseJson(self.L, body)) {
-                c.lua_setglobal(self.L, "json");
-            } else |_| {}
+
+        if (parseJson(self.L, body)) {
+            c.lua_setglobal(self.L, "json");
+        } else |_| {
+            // Cleanup any weirdness w/ Lua's stack
+            c.lua_settop(self.L, top);
         }
 
         if (parseFormBody(self.L, self.allocator, body)) {
             c.lua_setglobal(self.L, "form");
-        } else |_| {}
+        } else |_| {
+            // Cleanup any weirdness w/ Lua's stack
+            c.lua_settop(self.L, top);
+        }
     }
 
     exec(self.L, stmt) catch return false;
@@ -155,8 +161,11 @@ test "toCamelCaseZ" {
 }
 
 // Leaves a lua table on the stack
-// TODO: Use errdefer to clean up stack maybe?!!
 fn parseJson(L: *c.lua_State, json: []const u8) !void {
+    if (!std.json.validate(json)) {
+        return error.NotJSON;
+    }
+
     var stream = std.json.TokenStream.init(json);
 
     if (try stream.next()) |t| switch (t) {
@@ -243,11 +252,9 @@ fn readArray(L: *c.lua_State, stream: *std.json.TokenStream) !void {
     }
 }
 
-// TODO: instead of passing in an allocator, we should just have a
-// scratch buffer that's grown as needed?
+// TODO: move the scratch buffer out of here?
 fn parseFormBody(L: *c.lua_State, allocator: std.mem.Allocator, form: []const u8) !void {
     c.lua_createtable(L, 0, 0);
-    errdefer c.lua_pop(L, 1);
 
     var iter = std.mem.tokenize(u8, form, "&");
     while (iter.next()) |tok| {
@@ -257,7 +264,6 @@ fn parseFormBody(L: *c.lua_State, allocator: std.mem.Allocator, form: []const u8
         var pair = std.mem.tokenize(u8, tok, "=");
 
         var name = try decodeUri(buf, pair.next() orelse continue);
-        errdefer c.lua_pop(L, 1);
         _ = c.lua_pushlstring(L, name.ptr, name.len);
 
         var value = try decodeUri(buf, pair.rest());
