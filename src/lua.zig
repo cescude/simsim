@@ -98,9 +98,11 @@ pub fn eval(self: @This(), str: []const u8, msg: c.mg_http_message) bool {
                 c.lua_setglobal(self.L, "json");
             } else |_| {}
         }
-    }
 
-    // TODO: add `form` variable for submitted form bodies
+        if (parseFormBody(self.L, self.allocator, body)) {
+            c.lua_setglobal(self.L, "form");
+        } else |_| {}
+    }
 
     exec(self.L, stmt) catch return false;
 
@@ -153,6 +155,7 @@ test "toCamelCaseZ" {
 }
 
 // Leaves a lua table on the stack
+// TODO: Use errdefer to clean up stack maybe?!!
 fn parseJson(L: *c.lua_State, json: []const u8) !void {
     var stream = std.json.TokenStream.init(json);
 
@@ -240,44 +243,71 @@ fn readArray(L: *c.lua_State, stream: *std.json.TokenStream) !void {
     }
 }
 
-// test "lua scratch" {
-//     var lua = try init(std.testing.allocator);
-//     defer lua.deinit();
+// TODO: instead of passing in an allocator, we should just have a
+// scratch buffer that's grown as needed?
+fn parseFormBody(L: *c.lua_State, allocator: std.mem.Allocator, form: []const u8) !void {
+    c.lua_createtable(L, 0, 0);
+    errdefer c.lua_pop(L, 1);
 
-//     var cases = .{
-//         .{ true, "2 + 1" },
-//         .{ true, "true" },
-//         .{ true, "'some string'" },
-//         .{ false, "false" },
-//         .{ false, "null" },
-//         .{ false, "invalid lua code?" },
-//     };
+    var iter = std.mem.tokenize(u8, form, "&");
+    while (iter.next()) |tok| {
+        var buf = try allocator.alloc(u8, tok.len); // Decoding always shrinks the size (eg. %20 goes from three bytes to one)
+        defer allocator.free(buf);
 
-//     inline for (cases) |case| {
-//         try std.testing.expectEqual(case[0], lua.eval(case[1], msg));
-//     }
-// }
+        var pair = std.mem.tokenize(u8, tok, "=");
 
-// test "json parse to lua struct" {
-//     const json =
-//         \\{ "one" : "twoish",
-//         \\  "three" : "four",
-//         \\  "five": { "hey" : "ok" },
-//         \\  "ok" : [1001, 24.4, 398, 41]
-//         \\}
-//     ;
+        var name = try decodeUri(buf, pair.next() orelse continue);
+        errdefer c.lua_pop(L, 1);
+        _ = c.lua_pushlstring(L, name.ptr, name.len);
 
-//     if (std.json.validate(json)) {
-//         var L = c.luaL_newstate() orelse return error.LuaInitFailure;
-//         c.luaL_openlibs(L);
+        var value = try decodeUri(buf, pair.rest());
+        _ = c.lua_pushlstring(L, value.ptr, value.len);
 
-//         parseJson(L, json) catch {
-//             try std.testing.expect(false);
-//         };
-//         c.lua_setglobal(L, "jj");
-//         std.debug.print("\n\n\n", .{});
-//         try exec(L, "print(jj.ok[1]*20)");
-//         std.debug.print("\n", .{});
-//     }
-// }
+        c.lua_settable(L, -3);
+    }
+}
 
+fn toNibble(character: u8) !u4 {
+    const codes = "0123456789abcdef";
+    return @truncate(u4, std.mem.indexOfScalar(u8, codes, std.ascii.toLower(character)) orelse return error.InvalidHexDigit);
+}
+
+fn decodeUri(buf: []u8, str: []const u8) ![]const u8 {
+    const ReadMode = enum { Normal, HighBits, LowBits };
+    var read_mode = ReadMode.Normal;
+
+    var dst_idx: usize = 0;
+    for (str) |b| {
+        switch (read_mode) {
+            .Normal => {
+                if (b == '%') {
+                    read_mode = .HighBits;
+                } else {
+                    buf[dst_idx] = b;
+                    dst_idx += 1;
+                }
+            },
+            .HighBits => {
+                buf[dst_idx] = try toNibble(b);
+                buf[dst_idx] <<= 4;
+                read_mode = .LowBits;
+            },
+            .LowBits => {
+                buf[dst_idx] += try toNibble(b);
+                read_mode = .Normal;
+                dst_idx += 1;
+            },
+        }
+    }
+
+    if (read_mode != ReadMode.Normal) {
+        return error.IncompleteByteSequence;
+    }
+    return buf[0..dst_idx];
+}
+
+test "decodeUri" {
+    var dec: [20]u8 = undefined;
+    var enc = "one%20two&on%6f";
+    std.debug.print("decodeUri: orig={s}, decoded={s}\n", .{ enc, try decodeUri(&dec, enc) });
+}

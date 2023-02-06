@@ -10,3 +10,20 @@
 # just test for the presence of the header
 @header.xNoCache
 {"ok":"anything else!"}
+
+/form
+@form.ok == 'yep'
+{"ok": "Yes Indeed!"}
+
+/form
+@form.ok
+{"ok": true}
+
+/form
+@form.two and form.two=='three'
+TEXT
+Hey, good job on that one!
+TEXT
+
+/form
+{"ok": "Not OK!"}
