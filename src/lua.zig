@@ -5,32 +5,6 @@ const c = externs.c;
 L: *c.lua_State,
 allocator: std.mem.Allocator,
 
-// export fn body(L: ?*c.lua_State) c_int {
-//     c.lua_pushnumber(L, 12);
-//     return 1;
-// }
-
-// export fn header(L: ?*c.lua_State) c_int {
-//     return 1;
-// }
-
-// export fn requireJsonLib(L: ?*c.lua_State) c_int {
-//     _ = c.lua_pushlstring(L, externs.lua_json_module, externs.lua_json_module.len);
-//     return 1;
-// }
-
-fn exec(L: *c.lua_State, str: []const u8) !void {
-    if (c.luaL_loadstring(L, str.ptr) != 0) {
-        std.debug.print("loadstring => {s}\n", .{c.lua_tolstring(L, -1, null)});
-        return error.LuaFailedLoadString;
-    }
-
-    if (c.lua_pcallk(L, 0, c.LUA_MULTRET, 0, 0, null) != 0) {
-        std.debug.print("pcallk => {s}\n", .{c.lua_tolstring(L, -1, null)});
-        return error.LuaFailedCall;
-    }
-}
-
 pub fn init(allocator: std.mem.Allocator) !@This() {
     var L = c.luaL_newstate() orelse return error.LuaInitFailure;
 
@@ -51,7 +25,11 @@ pub fn deinit(self: @This()) void {
 // the fact that I can't specify c.mg_str in the argument for some
 // reason.
 fn setGlobal(self: @This(), name: [:0]const u8, str: anytype) void {
-    _ = c.lua_pushlstring(self.L, str.ptr, str.len);
+    if (str.ptr) |str_ptr| {
+        _ = c.lua_pushlstring(self.L, str_ptr, str.len);
+    } else {
+        c.lua_pushnil(self.L);
+    }
     c.lua_setglobal(self.L, name);
 }
 
@@ -110,9 +88,22 @@ pub fn eval(self: @This(), str: []const u8, msg: c.mg_http_message) bool {
         }
     }
 
-    exec(self.L, stmt) catch return false;
+    self.exec(stmt) catch {
+        std.debug.print("{s}\n", .{c.lua_tolstring(self.L, -1, null)});
+        return false;
+    };
 
     return c.lua_toboolean(self.L, -1) != 0;
+}
+
+fn exec(self: @This(), str: []const u8) !void {
+    if (c.luaL_loadstring(self.L, str.ptr) != 0) {
+        return error.LuaFailedLoadString;
+    }
+
+    if (c.lua_pcallk(self.L, 0, c.LUA_MULTRET, 0, 0, null) != 0) {
+        return error.LuaFailedCall;
+    }
 }
 
 fn toCamelCaseZ(dst: [:0]u8, src: anytype) void {
@@ -300,8 +291,8 @@ fn decodeUri(buf: []u8, str: []const u8) ![]const u8 {
             },
             .LowBits => {
                 buf[dst_idx] += try toNibble(b);
-                read_mode = .Normal;
                 dst_idx += 1;
+                read_mode = .Normal;
             },
         }
     }
