@@ -16,6 +16,9 @@ CONTENT
 "two": false
 }
 
+/json/*/*/three
+{ "something": "else!" }
+
 /what2/do/you
 # Here we go
 @ string.sub(uri, -3, -1) == 'you'

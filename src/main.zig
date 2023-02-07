@@ -34,7 +34,7 @@ const Definition = struct {
     }
 
     pub fn match(self: Definition, msg: c.mg_http_message) !bool {
-        if (!std.mem.eql(u8, self.uri, msg.uri.ptr[0..msg.uri.len])) {
+        if (!matchUris(self.uri, msg.uri.ptr[0..msg.uri.len])) {
             return false;
         }
 
@@ -48,6 +48,41 @@ const Definition = struct {
         return true;
     }
 };
+
+test "matchUris" {
+    try std.testing.expect(matchUris("one/*/three", "one/two/three"));
+    try std.testing.expect(matchUris("/one", "/one"));
+    try std.testing.expect(!matchUris("/one", "/one/"));
+    try std.testing.expect(!matchUris("/one/", "/one"));
+    try std.testing.expect(matchUris("/*/*/what", "/one/two/what"));
+    try std.testing.expect(!matchUris("/one/two/*", "/one/two/three/four"));
+}
+
+fn matchUris(pattern: []const u8, uri: []const u8) bool {
+    var piter = std.mem.split(u8, pattern, "/");
+    var uiter = std.mem.split(u8, uri, "/");
+
+    while (true) {
+        var pattern_segment = piter.next();
+        var uri_segment = uiter.next();
+
+        if (pattern_segment == null and uri_segment == null) {
+            return true;
+        }
+
+        if (pattern_segment == null or uri_segment == null) {
+            return false;
+        }
+
+        if (std.mem.eql(u8, pattern_segment.?, "*")) {
+            continue;
+        }
+
+        if (!std.mem.eql(u8, pattern_segment.?, uri_segment.?)) {
+            return false;
+        }
+    }
+}
 
 export fn callback(conn: ?*c.mg_connection, ev: c_int, ev_data: ?*anyopaque, files: ?*anyopaque) void {
     if (ev == c.MG_EV_HTTP_MSG) {
