@@ -84,27 +84,34 @@ fn matchUris(pattern: []const u8, uri: []const u8) bool {
     }
 }
 
-export fn callback(conn: ?*c.mg_connection, ev: c_int, ev_data: ?*anyopaque, files: ?*anyopaque) void {
-    if (ev == c.MG_EV_HTTP_MSG) {
-        if (handleHttpRequest(conn, ev_data, files)) {
-            // Nothing to do!
-        } else |err| switch (err) {
-            error.NoMatch => {},
-            else => {
-                std.debug.print("Error: {}\n", .{err});
-                c.mg_http_reply(conn, 500, null, "");
-            },
+fn HttpRequestHandler(comptime T: type) type {
+    return struct {
+        cb: *const CallbackFnType,
+        user_data: T,
+
+        const Self = @This();
+        const CallbackFnType = fn (*c.mg_connection, *c.mg_http_message, T) void;
+
+        pub fn init(cb: *const CallbackFnType, user_data: T) Self {
+            return .{
+                .cb = cb,
+                .user_data = user_data,
+            };
         }
-    }
+
+        pub export fn mgCallback(_conn: ?*c.mg_connection, ev: c_int, _msg: ?*anyopaque, _handler: ?*anyopaque) void {
+            var conn = _conn orelse return;
+            var msg = cast(c.mg_http_message, _msg orelse return);
+            var self = cast(Self, _handler orelse return);
+
+            if (ev == c.MG_EV_HTTP_MSG) {
+                self.cb(conn, msg, self.user_data);
+            }
+        }
+    };
 }
 
-fn handleHttpRequest(_conn: ?*c.mg_connection, _data: ?*anyopaque, _file_names: ?*anyopaque) !void {
-    var file_names = cast([][]const u8, _file_names orelse return error.NullFiles).*;
-
-    var conn = _conn orelse return error.NullConnection;
-    var data = _data orelse return error.NullEvData;
-
-    var msg = cast(c.mg_http_message, data);
+fn handleHttpRequest(conn: *c.mg_connection, msg: *c.mg_http_message, file_names: [][]const u8) void {
     var uri = msg.uri.ptr[0..msg.uri.len];
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -121,9 +128,18 @@ fn handleHttpRequest(_conn: ?*c.mg_connection, _data: ?*anyopaque, _file_names: 
         };
         defer file.close();
 
-        var buffer = try file.readToEndAlloc(allocator, 1 << 30);
+        var buffer = file.readToEndAlloc(allocator, 1 << 30) catch |err| {
+            std.debug.print("Error reading file {s}, {}\n", .{ file_name, err });
+            continue;
+        };
 
-        var defn = try findDefinition(allocator, buffer, msg.*) orelse continue;
+        var defn = findDefinition(allocator, buffer, msg.*) catch |err| switch (err) {
+            error.NoMatchingDefinition => continue,
+            else => {
+                std.debug.print("Error while searching for definition {}\n", .{err});
+                continue;
+            },
+        };
         defer defn.deinit();
 
         std.debug.print("Matched: {s}", .{defn.uri});
@@ -144,11 +160,9 @@ fn handleHttpRequest(_conn: ?*c.mg_connection, _data: ?*anyopaque, _file_names: 
 
     std.debug.print("No Match for {s}\n", .{uri});
     c.mg_http_reply(conn, 404, "", "");
-
-    return error.NoMatch;
 }
 
-fn findDefinition(allocator: std.mem.Allocator, payload: []const u8, msg: c.mg_http_message) !?Definition {
+fn findDefinition(allocator: std.mem.Allocator, payload: []const u8, msg: c.mg_http_message) !Definition {
     var lines = std.mem.split(u8, payload, "\n");
 
     while (lines.next()) |line| {
@@ -180,7 +194,7 @@ fn findDefinition(allocator: std.mem.Allocator, payload: []const u8, msg: c.mg_h
         defn.deinit();
     }
 
-    return null;
+    return error.NoMatchingDefinition;
 }
 
 fn readDefinition(defn: *Definition, lines: *std.mem.SplitIterator(u8)) !void {
@@ -339,7 +353,9 @@ pub fn main() !void {
     c.mg_mgr_init(&mgr);
     defer c.mg_mgr_free(&mgr);
 
-    _ = c.mg_http_listen(&mgr, listen_addr.ptr, callback, cast(anyopaque, &files));
+    var handler = HttpRequestHandler([][]const u8).init(&handleHttpRequest, files);
+
+    _ = c.mg_http_listen(&mgr, listen_addr.ptr, HttpRequestHandler([][]const u8).mgCallback, cast(anyopaque, &handler));
     while (true) {
         c.mg_mgr_poll(&mgr, 1000);
     }
