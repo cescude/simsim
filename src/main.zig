@@ -84,32 +84,44 @@ fn matchUris(pattern: []const u8, uri: []const u8) bool {
     }
 }
 
-fn HttpRequestHandler(comptime T: type) type {
-    return struct {
-        cb: *const CallbackFnType,
-        user_data: T,
+const Http = struct {
+    pub fn serve(addr: []const u8, port: u16, comptime T: type, data: T, user_callback: *const fn (*c.mg_connection, *c.mg_http_message, T) void) !noreturn {
+        var listen_buf = [_:0]u8{0} ** 200;
+        var listen_addr = try std.fmt.bufPrint(&listen_buf, "http://{s}:{d}", .{ addr, port });
 
-        const Self = @This();
-        const CallbackFnType = fn (*c.mg_connection, *c.mg_http_message, T) void;
+        var mgr: c.mg_mgr = undefined;
+        c.mg_mgr_init(&mgr);
+        defer c.mg_mgr_free(&mgr);
 
-        pub fn init(cb: *const CallbackFnType, user_data: T) Self {
-            return .{
-                .cb = cb,
-                .user_data = user_data,
-            };
-        }
+        const UserDataWrapper = struct {
+            user_callback: @TypeOf(user_callback),
+            user_data: T,
 
-        pub export fn mgCallback(_conn: ?*c.mg_connection, ev: c_int, _msg: ?*anyopaque, _handler: ?*anyopaque) void {
-            var conn = _conn orelse return;
-            var msg = cast(c.mg_http_message, _msg orelse return);
-            var self = cast(Self, _handler orelse return);
+            const SelfType = @This();
 
-            if (ev == c.MG_EV_HTTP_MSG) {
-                self.cb(conn, msg, self.user_data);
+            // Function that mongoose actually calls...this then lifts up into the user callback
+            export fn userCallbackWrapper(_conn: ?*c.mg_connection, ev: c_int, _msg: ?*anyopaque, _wrap: ?*anyopaque) void {
+                var conn = _conn orelse return;
+                var http_msg = cast(c.mg_http_message, _msg orelse return);
+                var wrap = cast(SelfType, _wrap orelse return);
+
+                if (ev == c.MG_EV_HTTP_MSG) {
+                    wrap.user_callback(conn, http_msg, wrap.user_data);
+                }
             }
+        };
+
+        const userDataWrapper = UserDataWrapper{
+            .user_callback = user_callback,
+            .user_data = data,
+        };
+
+        _ = c.mg_http_listen(&mgr, listen_addr.ptr, UserDataWrapper.userCallbackWrapper, cast(anyopaque, &userDataWrapper));
+        while (true) {
+            c.mg_mgr_poll(&mgr, 1000);
         }
-    };
-}
+    }
+};
 
 fn handleHttpRequest(conn: *c.mg_connection, msg: *c.mg_http_message, file_names: [][]const u8) void {
     var uri = msg.uri.ptr[0..msg.uri.len];
@@ -341,22 +353,10 @@ pub fn main() !void {
         files = &default_files_array;
     }
 
-    var listen_buf = [_:0]u8{0} ** 200;
-    var listen_addr = try std.fmt.bufPrint(&listen_buf, "http://{s}:{d}", .{ host, port });
-
-    std.debug.print("Starting up the server at {s}\n", .{listen_addr});
+    std.debug.print("Starting up the server at http://{s}:{}\n", .{ host, port });
     for (files) |file| {
         std.debug.print("Definitions pulled from {s}\n", .{file});
     }
 
-    var mgr: c.mg_mgr = undefined;
-    c.mg_mgr_init(&mgr);
-    defer c.mg_mgr_free(&mgr);
-
-    var handler = HttpRequestHandler([][]const u8).init(&handleHttpRequest, files);
-
-    _ = c.mg_http_listen(&mgr, listen_addr.ptr, HttpRequestHandler([][]const u8).mgCallback, cast(anyopaque, &handler));
-    while (true) {
-        c.mg_mgr_poll(&mgr, 1000);
-    }
+    try Http.serve(host, port, [][]const u8, files, handleHttpRequest);
 }
