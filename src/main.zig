@@ -1,82 +1,47 @@
 const std = @import("std");
 const ZOpts = @import("zopts");
-const Lua = @import("lua.zig");
 const Http = @import("http.zig");
+const Definition = @import("definition.zig");
 
 const externs = @import("externs.zig");
 const c = externs.c;
 
-const Definition = struct {
-    uri: []const u8,
-    guards: std.ArrayList([]const u8),
-    headers: std.ArrayList([]const u8),
-    body: []const u8,
-    allocator: std.mem.Allocator,
+pub fn main() !void {
+    var zopts = ZOpts.init(std.heap.page_allocator);
+    defer zopts.deinit();
 
-    pub fn init(allocator: std.mem.Allocator, uri: []const u8) Definition {
-        return .{
-            .uri = uri,
-            .guards = std.ArrayList([]const u8).init(allocator),
-            .headers = std.ArrayList([]const u8).init(allocator),
-            .body = "",
-            .allocator = allocator,
-        };
+    zopts.name("simsim");
+    zopts.summary(
+        \\Maybe an easy to use mocking HTTP server?
+    );
+
+    var host: []const u8 = "localhost";
+    var port: u16 = 3131;
+    var files: [][]const u8 = undefined;
+    var show_help = false;
+
+    try zopts.flag(&host, .{ .name = "host", .short = 'h', .description = "Hostname or IP to listen on (defaults to localhost)." });
+    try zopts.flag(&port, .{ .name = "port", .short = 'p', .description = "Port to listen on (defaults to 3131)." });
+    try zopts.flag(&show_help, .{ .name = "help", .description = "Show this help message." });
+    try zopts.extra(&files, .{ .placeholder = "[FILE]", .description = "Files containing payload definitions, processed in order (default is 'payload')." });
+
+    zopts.parseOrDie();
+
+    if (show_help) {
+        zopts.printHelpAndDie();
     }
 
-    pub fn deinit(self: Definition) void {
-        self.guards.deinit();
-        self.headers.deinit();
+    if (files.len == 0) {
+        var default_files_array = [_][]const u8{"payload"};
+        files = &default_files_array;
     }
 
-    pub fn match(self: Definition, msg: c.mg_http_message) !bool {
-        if (!matchUris(self.uri, msg.uri.ptr[0..msg.uri.len])) {
-            return false;
-        }
-
-        var lua = try Lua.init(self.allocator);
-        defer lua.deinit();
-
-        for (self.guards.items) |grd| {
-            if (!lua.eval(grd, msg)) return false;
-        }
-
-        return true;
+    std.debug.print("Starting up the server at http://{s}:{}\n", .{ host, port });
+    for (files) |file| {
+        std.debug.print("Definitions pulled from {s}\n", .{file});
     }
-};
 
-fn matchUris(pattern: []const u8, uri: []const u8) bool {
-    var piter = std.mem.split(u8, pattern, "/");
-    var uiter = std.mem.split(u8, uri, "/");
-
-    while (true) {
-        var pattern_segment = piter.next();
-        var uri_segment = uiter.next();
-
-        if (pattern_segment == null and uri_segment == null) {
-            return true;
-        }
-
-        if (pattern_segment == null or uri_segment == null) {
-            return false;
-        }
-
-        if (std.mem.eql(u8, pattern_segment.?, "*")) {
-            continue;
-        }
-
-        if (!std.mem.eql(u8, pattern_segment.?, uri_segment.?)) {
-            return false;
-        }
-    }
-}
-
-test "matchUris" {
-    try std.testing.expect(matchUris("one/*/three", "one/two/three"));
-    try std.testing.expect(matchUris("/one", "/one"));
-    try std.testing.expect(!matchUris("/one", "/one/"));
-    try std.testing.expect(!matchUris("/one/", "/one"));
-    try std.testing.expect(matchUris("/*/*/what", "/one/two/what"));
-    try std.testing.expect(!matchUris("/one/two/*", "/one/two/three/four"));
+    try Http.serve(host, port, [][]const u8, files, handleHttpRequest);
 }
 
 fn handleHttpRequest(conn: *c.mg_connection, msg: *c.mg_http_message, file_names: [][]const u8) void {
@@ -166,8 +131,6 @@ fn findDefinition(allocator: std.mem.Allocator, payload: []const u8, msg: c.mg_h
 }
 
 fn readDefinition(defn: *Definition, lines: *std.mem.SplitIterator(u8)) !void {
-    var delim: ?[]const u8 = null;
-    var is_json = false;
     var content_start: usize = undefined;
 
     // Read headers?
@@ -192,24 +155,17 @@ fn readDefinition(defn: *Definition, lines: *std.mem.SplitIterator(u8)) !void {
             continue;
         }
 
-        // Found a json payload, go to the read content section...
+        // Found a json payload, read content until we have a valid JSON object
         if (std.mem.startsWith(u8, trimmed, "{")) {
             content_start = (lines.index orelse lines.buffer.len) - line.len - 1;
-            is_json = true;
-            break;
+            defn.body = std.mem.trim(u8, try readJsonContent(lines, content_start), &std.ascii.whitespace);
+            return;
         }
 
-        // Found a delimeter, go to the read content section...
-        delim = trimmed;
+        // `trimmed` is a delimeter, read content section until we find another copy of it
         content_start = (lines.index orelse lines.buffer.len);
-        is_json = false;
-        break;
-    }
-
-    if (is_json) {
-        defn.body = std.mem.trim(u8, try readJsonContent(lines, content_start), &std.ascii.whitespace);
-    } else if (delim) |_| {
-        defn.body = try readDelimitedContent(lines, delim.?, content_start);
+        defn.body = try readDelimitedContent(lines, trimmed, content_start);
+        return;
     }
 }
 
@@ -234,29 +190,7 @@ fn readJsonContent(_lines: *std.mem.SplitIterator(u8), json_start_offset: usize)
     return error.UnterminatedJSONPayload;
 }
 
-test "movePastJsonContent" {
-    var payloads =
-        [_][]const u8{
-        \\  { "one" :
-        \\ true, "two":
-        \\
-        \\ [false, false, "FALLSE!"]}
-        \\ Here's some other stuff
-        ,
-        \\ { "one": "two" }
-        ,
-        "{\"one\":\n\"no ending newline\"}",
-    };
-
-    for (payloads) |payload| {
-        var lines = std.mem.split(u8, payload, "\n");
-
-        var result = try readJsonContent(&lines, 0);
-        _ = result;
-    }
-}
-
-test "json validates with prefixed space" {
+test "std.json validates with prefixed space" {
     var payload =
         \\   { "one":true,
         \\  "two":false
@@ -277,42 +211,4 @@ fn readDelimitedContent(_lines: *std.mem.SplitIterator(u8), delimeter: []const u
     }
 
     return error.UnterminatedPayload;
-}
-
-pub fn main() !void {
-    var zopts = ZOpts.init(std.heap.page_allocator);
-    defer zopts.deinit();
-
-    zopts.name("simsim");
-    zopts.summary(
-        \\Maybe an easy HTTP server mocker.
-    );
-
-    var host: []const u8 = "localhost";
-    var port: u16 = 3131;
-    var files: [][]const u8 = undefined;
-    var show_help = false;
-
-    try zopts.flag(&host, .{ .name = "host", .short = 'h', .description = "Hostname or IP to listen on (defaults to localhost)." });
-    try zopts.flag(&port, .{ .name = "port", .short = 'p', .description = "Port to listen on (defaults to 3131)." });
-    try zopts.flag(&show_help, .{ .name = "help", .description = "Show this help message." });
-    try zopts.extra(&files, .{ .placeholder = "[FILE]", .description = "Files containing payload definitions, processed in order (default is 'payload')." });
-
-    zopts.parseOrDie();
-
-    if (show_help) {
-        zopts.printHelpAndDie();
-    }
-
-    if (files.len == 0) {
-        var default_files_array = [_][]const u8{"payload"};
-        files = &default_files_array;
-    }
-
-    std.debug.print("Starting up the server at http://{s}:{}\n", .{ host, port });
-    for (files) |file| {
-        std.debug.print("Definitions pulled from {s}\n", .{file});
-    }
-
-    try Http.serve(host, port, [][]const u8, files, handleHttpRequest);
 }
