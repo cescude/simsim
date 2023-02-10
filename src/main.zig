@@ -66,13 +66,10 @@ fn handleHttpRequest(conn: *c.mg_connection, msg: *c.mg_http_message, file_names
             continue;
         };
 
-        var defn = findDefinition(allocator, buffer, msg.*) catch |err| switch (err) {
-            error.NoMatchingDefinition => continue,
-            else => {
-                std.debug.print("Error while searching for definition {}\n", .{err});
-                continue;
-            },
-        };
+        var defn = findDefinition(allocator, buffer, msg.*) catch |err| {
+            std.debug.print("Error while searching for definition {}\n", .{err});
+            continue;
+        } orelse continue;
         defer defn.deinit();
 
         std.debug.print("Matched: {s}", .{defn.uri});
@@ -95,7 +92,7 @@ fn handleHttpRequest(conn: *c.mg_connection, msg: *c.mg_http_message, file_names
     c.mg_http_reply(conn, 404, "", "");
 }
 
-fn findDefinition(allocator: std.mem.Allocator, payload: []const u8, msg: c.mg_http_message) !Definition {
+fn findDefinition(allocator: std.mem.Allocator, payload: []const u8, msg: c.mg_http_message) !?Definition {
     var lines = std.mem.split(u8, payload, "\n");
 
     while (lines.next()) |line| {
@@ -127,7 +124,7 @@ fn findDefinition(allocator: std.mem.Allocator, payload: []const u8, msg: c.mg_h
         defn.deinit();
     }
 
-    return error.NoMatchingDefinition;
+    return null;
 }
 
 fn readDefinition(defn: *Definition, lines: *std.mem.SplitIterator(u8)) !void {
@@ -211,4 +208,77 @@ fn readDelimitedContent(_lines: *std.mem.SplitIterator(u8), delimeter: []const u
     }
 
     return error.UnterminatedPayload;
+}
+
+fn mkmsg(full_path: []const u8, headers: []const u8, body: []const u8) c.mg_http_message {
+    var iter: std.mem.SplitIterator(u8) = undefined;
+    var req: c.mg_http_message = undefined;
+
+    iter = std.mem.split(u8, full_path, "?");
+    var path = iter.next().?;
+    var query = iter.rest();
+
+    req.uri = .{ .ptr = path.ptr, .len = path.len };
+    req.query = .{ .ptr = query.ptr, .len = query.len };
+
+    iter = std.mem.split(u8, headers, "\r\n");
+    var i: usize = 0;
+    while (iter.next()) |hdr_pair| {
+        var jter = std.mem.split(u8, hdr_pair, ":");
+        var name = jter.next().?;
+        var value = jter.rest();
+
+        req.headers[i].name = .{ .ptr = name.ptr, .len = name.len };
+        req.headers[i].value = .{ .ptr = value.ptr, .len = value.len };
+        i += 1;
+    }
+
+    req.body = .{ .ptr = body.ptr, .len = body.len };
+
+    return req;
+}
+
+fn resultStr(comptime r: []const u8) []const u8 {
+    return "{\"result\": " ++ r ++ "}";
+}
+
+test "findDefinition" {
+    const payload: []const u8 = @embedFile("example.payload");
+
+    const Case = struct { c.mg_http_message, []const u8 };
+    comptime var cases = [_]Case{
+        .{ mkmsg("/home", "", ""), resultStr("1") },
+        .{ mkmsg("/lua/comparison", "", ""), resultStr("2") },
+
+        // Test lua guard of query string
+        .{ mkmsg("/query?ok=indeed", "", ""), resultStr("3") },
+        .{ mkmsg("/query?ok=maybe", "", ""), resultStr("4") },
+        .{ mkmsg("/query?abc=def&ok=maybe&ghi=jkl", "", ""), resultStr("4") },
+
+        // Test lua guard of json body
+        .{ mkmsg("/json/body", "", "{\"ok\": \"indeed\"}"), resultStr("5") },
+        .{ mkmsg("/json/body", "", "{\"ok\": \"maybe?\"}"), resultStr("6") },
+        .{ mkmsg("/json/body", "", "{\"nope\": \"indeed\"}"), resultStr("7") },
+
+        // Test lua guard of form body
+        .{ mkmsg("/form/body", "", "ok=indeed"), resultStr("8") },
+        .{ mkmsg("/form/body", "", "ok=maybe"), resultStr("9") },
+        .{ mkmsg("/form/body", "", "nope=indeed"), resultStr("10") },
+
+        // Test wildcard uris
+        .{ mkmsg("/wildcard/anything/def/ghi", "", ""), resultStr("11") },
+        .{ mkmsg("/wildcard/abc/anything/ghi", "", ""), resultStr("12") },
+        .{ mkmsg("/wildcard/anything_at_all", "", ""), resultStr("13") },
+    };
+
+    for (cases) |case, idx| {
+        if (try findDefinition(std.testing.allocator, payload, case[0])) |defn| {
+            defer defn.deinit();
+
+            try std.testing.expectEqualSlices(u8, case[1], defn.body);
+        } else {
+            std.debug.print("Case #{d} failed, no matching definition found!\n", .{idx + 1});
+            try std.testing.expect(false);
+        }
+    }
 }

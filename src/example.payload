@@ -1,0 +1,54 @@
+/home
+{"result": 1}
+
+# This should never match, since one of its guards evaluates false
+/lua/comparison
+@ 2 < 1
+@ '2022-01-31' < '2022-02-01'
+{"result": "never"}
+ 
+/lua/comparison
+@ 2 > 1
+@ '2022-01-31' < '2022-02-01'
+{"result": 2}
+
+/query
+@query.ok == 'indeed'
+{"result": 3}
+
+/query
+@query.ok
+{"result": 4}
+
+# Match based on JSON request data
+/json/body
+@ json.ok == 'indeed'
+{"result": 5}
+ 
+/json/body
+@ json.ok
+{"result": 6}
+ 
+/json/body
+{"result": 7}
+
+# Match based on form request data
+/form/body
+@ form.ok == 'indeed'
+{"result": 8}
+ 
+/form/body
+@ form.ok
+{"result": 9}
+
+/form/body
+{"result": 10}
+
+/wildcard/*/def/ghi
+{"result": 11}
+
+/wildcard/abc/*/ghi
+{"result": 12}
+
+/wildcard/*
+{"result": 13}
