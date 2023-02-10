@@ -41,7 +41,6 @@ pub fn eval(self: @This(), str: []const u8, msg: c.mg_http_message) bool {
 
     self.setGlobal("method", msg.method);
     self.setGlobal("uri", msg.uri);
-    self.setGlobal("query", msg.query);
     self.setGlobal("proto", msg.proto);
     self.setGlobal("body", msg.body);
 
@@ -69,6 +68,18 @@ pub fn eval(self: @This(), str: []const u8, msg: c.mg_http_message) bool {
     c.lua_setglobal(self.L, "header");
     c.lua_setglobal(self.L, "headers");
 
+    if (msg.query.ptr) |queryptr| {
+        const top = c.lua_gettop(self.L);
+        const query = queryptr[0..msg.query.len];
+
+        if (parseUriString(self.L, self.allocator, query)) {
+            c.lua_setglobal(self.L, "query");
+        } else |_| {
+            // Cleanup any weirdness w/ Lua's stack
+            c.lua_settop(self.L, top);
+        }
+    }
+
     if (msg.body.ptr) |bodyptr| {
         const top = c.lua_gettop(self.L);
         const body = bodyptr[0..msg.body.len];
@@ -80,7 +91,7 @@ pub fn eval(self: @This(), str: []const u8, msg: c.mg_http_message) bool {
             c.lua_settop(self.L, top);
         }
 
-        if (parseFormBody(self.L, self.allocator, body)) {
+        if (parseUriString(self.L, self.allocator, body)) {
             c.lua_setglobal(self.L, "form");
         } else |_| {
             // Cleanup any weirdness w/ Lua's stack
@@ -244,7 +255,7 @@ fn readArray(L: *c.lua_State, stream: *std.json.TokenStream) !void {
 }
 
 // TODO: move the scratch buffer out of here?
-fn parseFormBody(L: *c.lua_State, allocator: std.mem.Allocator, form: []const u8) !void {
+fn parseUriString(L: *c.lua_State, allocator: std.mem.Allocator, form: []const u8) !void {
     c.lua_createtable(L, 0, 0);
 
     var iter = std.mem.tokenize(u8, form, "&");
