@@ -1,16 +1,38 @@
-/home
+#
+# Basic responses
+#
+
+/test/json
+> X-Item-Count: 1
 {"result": 1}
 
-# This should never match, since one of its guards evaluates false
+/test/raw
+> X-Item-Count: 2
+ANY_DELIMETER
+Some
+Text is here
+
+  and this is more.
+ANY_DELIMETER
+
+
+#
+# Test of lua functionality
+#
+
 /lua/comparison
 @ 2 < 1
 @ '2022-01-31' < '2022-02-01'
 {"result": "never"}
- 
+
 /lua/comparison
 @ 2 > 1
 @ '2022-01-31' < '2022-02-01'
 {"result": 2}
+
+#
+# Match based on query string
+#
 
 /query
 @query.ok == 'indeed'
@@ -20,29 +42,40 @@
 @query.ok
 {"result": 4}
 
-# Match based on JSON request data
+#
+# Match based on POST'ed JSON data
+#
+
 /json/body
 @ json.ok == 'indeed'
 {"result": 5}
- 
+
 /json/body
 @ json.ok
 {"result": 6}
- 
+
+# curl localhost:3131/json/body
 /json/body
 {"result": 7}
 
+#
 # Match based on form request data
+#
+
 /form/body
 @ form.ok == 'indeed'
 {"result": 8}
- 
+
 /form/body
 @ form.ok
 {"result": 9}
 
 /form/body
 {"result": 10}
+
+#
+# Matches wildard path values
+#
 
 /wildcard/*/def/ghi
 {"result": 11}

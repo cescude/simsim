@@ -24,12 +24,17 @@ pub fn deinit(self: @This()) void {
 // c.mg_str and []const u8 types, but I really only use it due to
 // the fact that I can't specify c.mg_str in the argument for some
 // reason.
-fn setGlobal(self: @This(), name: [:0]const u8, str: anytype) void {
+fn setGlobalString(self: @This(), name: [:0]const u8, str: anytype) void {
     if (str.ptr) |str_ptr| {
         _ = c.lua_pushlstring(self.L, str_ptr, str.len);
     } else {
         c.lua_pushnil(self.L);
     }
+    c.lua_setglobal(self.L, name);
+}
+
+fn makeDummyTable(self: @This(), name: [:0]const u8) void {
+    c.lua_createtable(self.L, 0, 0);
     c.lua_setglobal(self.L, name);
 }
 
@@ -39,15 +44,20 @@ pub fn eval(self: @This(), str: []const u8, msg: c.mg_http_message) bool {
     };
     defer self.allocator.free(stmt);
 
-    self.setGlobal("method", msg.method);
-    self.setGlobal("uri", msg.uri);
-    self.setGlobal("proto", msg.proto);
-    self.setGlobal("body", msg.body);
+    self.setGlobalString("method", msg.method);
+    self.setGlobalString("uri", msg.uri);
+    self.setGlobalString("proto", msg.proto);
+    self.setGlobalString("body", msg.body);
 
-    // Create a "header" table (also "headers" in case of typos). Will
-    // create a key that perfectly matches the header
-    // (eg. `header['Content-type']`) as well as a camel case version
-    // that can be accessed without quotes (eg. `header.contentType`).
+    // These may get overridden below
+    makeDummyTable(self, "query");
+    makeDummyTable(self, "json");
+    makeDummyTable(self, "form");
+
+    // Create a "headers" table. Will create a key that perfectly
+    // matches the header (eg. `headers['Content-type']`) as well as a
+    // camel case version that can be accessed without quotes
+    // (eg. `headers.contentType`).
 
     c.lua_createtable(self.L, 0, 0);
     for (msg.headers) |hdr| {
@@ -64,8 +74,6 @@ pub fn eval(self: @This(), str: []const u8, msg: c.mg_http_message) bool {
         _ = c.lua_pushlstring(self.L, hdr.value.ptr, hdr.value.len);
         c.lua_settable(self.L, -3);
     }
-    c.lua_pushvalue(self.L, -1); // duplicate top of stack
-    c.lua_setglobal(self.L, "header");
     c.lua_setglobal(self.L, "headers");
 
     if (msg.query.ptr) |queryptr| {
