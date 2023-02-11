@@ -1,104 +1,60 @@
-/what
-> X-Header: ok
-CONTENT
-Here we go!
-again...?
-CONTENT
-
-/json/one
-@true
-{ "one": ["two", "three"] }
-
-/json/multi
-> Content-type: application/ULTRA_JSON
-   {
-"one": true,
-"two": false
-}
-
-/json/*/*/three
-{ "something": "else!" }
-
-/what2/do/you
-# Here we go
-@ string.sub(uri, -3, -1) == 'you'
-@ string.sub(uri, 1, 6) == '/what2'
-@ print(method, body)
-> hdr: one
->hdr: two
-THIS
-What is the deal
-with cereal
-and that
-
-
-   cat, for real
-THIS
-
-/rng
-
-# 50% change of tails! If this guard fails, we'll skip down to the next
-# definition which will definitely match...
-
-@math.random() < 0.5
-> Content-type: text/html
-HTML
-<p>Tails!</p>
-HTML
-
-/rng
-> Content-type: text/html
-HTML
-<p>Heads!</p>
-HTML
-
 /
-> Content-Type: text/html
-@ uri == '/'
-HTML
-<html>
-  <head><title>OK, so this is may be taking things too far</title></head>
-  <body>
-    <ol>
-      <li><a href="/what">/what</a>
-      <li><a href="/what2/do/you">/what2/do/you</a>
-      <li><a href="/json/one">/json/one</a>
-      <li><a href="/json/multi">/json/multi</a>
-      <li><a href="/rng">FLip a cOIn!</a>
-    <ol>
-  </body>
-</html>
-HTML
+> Content-type: text/html
+BODY
+<ul>
+  <li><a href="/json">/json</a>
+  <li><a href="/csv">/csv</a>
+  <li><a href="/plain/text">/plain/text</a>
+  <li><a href="/rand">/rand</a>
+</ul>
 
-/poster
-@ json
-@ json.ok == 'yep'
-@ json.first and #json.first > 1
-{ "ok" : true }
+<form action="/form" method=POST>
+  <input name=name placeholder="Enter a name">
+  <input type=submit value="Submit">
+</form>
+BODY
 
-/poster
-@ json and json.ok == 'yep'
-{ "ok" : "almost" }
-
-/poster
-{ "ok" : false }
-
-/xyz
-@ json and json['s p a c e s']
-HTML
-<html><body>HEY HEY HEY</body></html>
-HTML
-
-/header/test
-@ SomeCustomHeader == 'OK'
+/json
 {
-  "result" : "ok"
+  "some": "json",
+  "ok?": [1, 2, 3, 4, 5]
 }
 
-/header/test
-{
-  "result" : "NOPE"
-}
+/csv
+> Content-type: application/csv
+CSV
+header1, header2, header3
+1,2,3
+4,5,6
+7,8,9
+CSV
 
-/end
-> X-End-Header: whatever
+/plain/text
+> Content-type: text/plain
+TEXT
+Here's some...
+
+   ...text!
+TEXT
+
+/rand
+@ math.random() < 0.5
+TEXT
+Heads!
+TEXT
+
+/rand
+TEXT
+Tails!
+TEXT
+
+/form
+@ form.name == 'Alice'
+{ "result": "Hello Alice" }
+
+/form
+@ form.name:lower() == 'bob'
+{ "result": "Hello Bob" }
+
+/form
+{ "result": "Hmm..." }
