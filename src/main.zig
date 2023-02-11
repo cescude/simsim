@@ -242,43 +242,112 @@ fn resultStr(comptime r: []const u8) []const u8 {
     return "{\"result\": " ++ r ++ "}";
 }
 
-test "findDefinition" {
-    const payload: []const u8 = @embedFile("example.payload");
+const TestCase = struct { c.mg_http_message, []const u8 };
 
-    const Case = struct { c.mg_http_message, []const u8 };
-    comptime var cases = [_]Case{
-        .{ mkmsg("/home", "", ""), resultStr("1") },
-        .{ mkmsg("/lua/comparison", "", ""), resultStr("2") },
-
-        // Test lua guard of query string
-        .{ mkmsg("/query?ok=indeed", "", ""), resultStr("3") },
-        .{ mkmsg("/query?ok=maybe", "", ""), resultStr("4") },
-        .{ mkmsg("/query?abc=def&ok=maybe&ghi=jkl", "", ""), resultStr("4") },
-
-        // Test lua guard of json body
-        .{ mkmsg("/json/body", "", "{\"ok\": \"indeed\"}"), resultStr("5") },
-        .{ mkmsg("/json/body", "", "{\"ok\": \"maybe?\"}"), resultStr("6") },
-        .{ mkmsg("/json/body", "", "{\"nope\": \"indeed\"}"), resultStr("7") },
-
-        // Test lua guard of form body
-        .{ mkmsg("/form/body", "", "ok=indeed"), resultStr("8") },
-        .{ mkmsg("/form/body", "", "ok=maybe"), resultStr("9") },
-        .{ mkmsg("/form/body", "", "nope=indeed"), resultStr("10") },
-
-        // Test wildcard uris
-        .{ mkmsg("/wildcard/anything/def/ghi", "", ""), resultStr("11") },
-        .{ mkmsg("/wildcard/abc/anything/ghi", "", ""), resultStr("12") },
-        .{ mkmsg("/wildcard/anything_at_all", "", ""), resultStr("13") },
-    };
-
+fn verifyTestCases(allocator: std.mem.Allocator, payload: []const u8, cases: []TestCase) !void {
     for (cases) |case, idx| {
-        if (try findDefinition(std.testing.allocator, payload, case[0])) |defn| {
+        if (try findDefinition(allocator, payload, case[0])) |defn| {
             defer defn.deinit();
-
             try std.testing.expectEqualSlices(u8, case[1], defn.body);
         } else {
             std.debug.print("Case #{d} failed, no matching definition found!\n", .{idx + 1});
             try std.testing.expect(false);
         }
+    }
+}
+
+test "Generic cases" {
+    const payload: []const u8 = @embedFile("example.payload");
+
+    comptime var cases = [_]TestCase{
+        .{ mkmsg("/test/json", "", ""), resultStr("1") },
+        .{ mkmsg("/test/raw", "", ""), "1,2,3\n4,5,6\n" },
+        .{ mkmsg("/lua/comparison", "", ""), resultStr("2") },
+    };
+
+    try verifyTestCases(std.testing.allocator, payload, &cases);
+}
+
+test "Lua: Query string guards" {
+    const payload: []const u8 = @embedFile("example.payload");
+
+    comptime var cases = [_]TestCase{
+        .{ mkmsg("/query?ok=indeed", "", ""), resultStr("3") },
+        .{ mkmsg("/query?ok=maybe", "", ""), resultStr("4") },
+        .{ mkmsg("/query?abc=def&ok=maybe&ghi=jkl", "", ""), resultStr("4") },
+    };
+
+    try verifyTestCases(std.testing.allocator, payload, &cases);
+}
+
+test "Lua: JSON body guards" {
+    const payload: []const u8 = @embedFile("example.payload");
+
+    comptime var cases = [_]TestCase{
+        .{ mkmsg("/json/body", "", "{\"ok\": \"indeed\"}"), resultStr("5") },
+        .{ mkmsg("/json/body", "", "{\"ok\": \"maybe?\"}"), resultStr("6") },
+        .{ mkmsg("/json/body", "", "{\"nope\": \"indeed\"}"), resultStr("7") },
+    };
+
+    try verifyTestCases(std.testing.allocator, payload, &cases);
+}
+
+test "Lua: Form body guards" {
+    const payload: []const u8 = @embedFile("example.payload");
+
+    comptime var cases = [_]TestCase{
+        .{ mkmsg("/form/body", "", "ok=indeed"), resultStr("8") },
+        .{ mkmsg("/form/body", "", "ok=maybe"), resultStr("9") },
+        .{ mkmsg("/form/body", "", "nope=indeed"), resultStr("10") },
+    };
+
+    try verifyTestCases(std.testing.allocator, payload, &cases);
+}
+
+test "Wildcard path matching" {
+    const payload: []const u8 = @embedFile("example.payload");
+
+    comptime var cases = [_]TestCase{
+        .{ mkmsg("/wildcard/anything/def/ghi", "", ""), resultStr("11") },
+        .{ mkmsg("/wildcard/abc/anything/ghi", "", ""), resultStr("12") },
+        .{ mkmsg("/wildcard/anything_at_all", "", ""), resultStr("13") },
+    };
+
+    try verifyTestCases(std.testing.allocator, payload, &cases);
+}
+
+test "Lua: Request headers" {
+    const payload: []const u8 = @embedFile("example.payload");
+
+    comptime var cases = [_]TestCase{
+        .{ mkmsg("/headers/switch", "X-Response-Type:1\r\n", ""), resultStr("14") }, // case 14 uses camel-case bareword thing
+        .{ mkmsg("/headers/switch", "X-Response-Type:2\r\n", ""), resultStr("15") }, // case 15 uses table string lookup
+        .{ mkmsg("/headers/switch", "x-RESPONSE-type:1\r\n", ""), resultStr("14") }, // case 14 is case insensitive
+        .{ mkmsg("/headers/switch", "x-RESPONSE-type:2\r\n", ""), resultStr("16") }, // string lookup is case sensitive
+    };
+
+    try verifyTestCases(std.testing.allocator, payload, &cases);
+}
+
+test "Response headers are transmitted properly" {
+    const payload: []const u8 = @embedFile("example.payload");
+
+    if (try findDefinition(std.testing.allocator, payload, mkmsg("/test/json", "", ""))) |defn| {
+        defer defn.deinit();
+
+        // Three headers (two defined + Content-type added)
+        try std.testing.expectEqual(@as(usize, 3), defn.headers.items.len);
+        try std.testing.expectEqualSlices(u8, "X-Response-Type: 1", defn.headers.items[0]);
+        try std.testing.expectEqualSlices(u8, "X-Another-Header: Here", defn.headers.items[1]);
+        try std.testing.expectEqualSlices(u8, "Content-Type: application/json", defn.headers.items[2]);
+    }
+
+    if (try findDefinition(std.testing.allocator, payload, mkmsg("/test/raw", "", ""))) |defn| {
+        defer defn.deinit();
+
+        // Just one header defined (not a JSON body, so no implicit content-type added)
+        try std.testing.expectEqual(@as(usize, 1), defn.headers.items.len);
+        try std.testing.expectEqualSlices(u8, "X-Response-Type: 2", defn.headers.items[0]);
+        try std.testing.expectEqualSlices(u8, "1,2,3\n4,5,6\n", defn.body);
     }
 }

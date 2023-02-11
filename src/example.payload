@@ -3,18 +3,16 @@
 #
 
 /test/json
-> X-Item-Count: 1
+> X-Response-Type: 1
+> X-Another-Header: Here
 {"result": 1}
 
 /test/raw
-> X-Item-Count: 2
-ANY_DELIMETER
-Some
-Text is here
-
-  and this is more.
-ANY_DELIMETER
-
+> X-Response-Type: 2
+EOF
+1,2,3
+4,5,6
+EOF
 
 #
 # Test of lua functionality
@@ -85,3 +83,18 @@ ANY_DELIMETER
 
 /wildcard/*
 {"result": 13}
+
+#
+# Matches based on request headers
+#
+
+/headers/switch
+@ headers.xResponseType == '1'
+{"result": 14}
+
+/headers/switch
+@ headers['X-Response-Type'] == '2'
+{"result": 15}
+
+/headers/switch
+{"result": 16}
