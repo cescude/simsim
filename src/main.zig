@@ -210,6 +210,8 @@ fn readDelimitedContent(_lines: *std.mem.SplitIterator(u8), delimeter: []const u
     return error.UnterminatedPayload;
 }
 
+// Everything below here is for testing the `findDefinition(...)` function
+
 fn mkmsg(full_path: []const u8, headers: []const u8, body: []const u8) c.mg_http_message {
     var iter: std.mem.SplitIterator(u8) = undefined;
     var req: c.mg_http_message = undefined;
@@ -335,6 +337,8 @@ test "Lua: Path segments" {
     comptime var cases = [_]TestCase{
         .{ mkmsg("/path/get/ok", "", ""), resultStr("17") },
         .{ mkmsg("/path/hmm/ok", "", ""), resultStr("18") },
+        .{ mkmsg("/path/hmm/perhaps/ok", "", ""), resultStr("19") },
+        .{ mkmsg("/path/hmm/perhaps/ok/let/us/add/more/here/though", "", ""), resultStr("20") },
     };
 
     try verifyTestCases(std.testing.allocator, payload, &cases);

@@ -62,17 +62,52 @@ fn matchUris(pattern: []const u8, uri: []const u8) bool {
             continue;
         }
 
+        if (std.mem.eql(u8, pattern_segment.?, "**")) {
+            pattern_segment = piter.next();
+
+            if (pattern_segment == null) {
+                // Expansion wildcard was at the tail of the pattern,
+                // so it matches the rest of the uri regardless of the
+                // uri's contents.
+                return true;
+            }
+
+            while (true) {
+                uri_segment = uiter.next();
+
+                if (uri_segment == null) {
+                    return false;
+                }
+
+                if (std.mem.eql(u8, pattern_segment.?, uri_segment.?)) {
+                    break;
+                }
+            }
+
+            continue;
+        }
+
         if (!std.mem.eql(u8, pattern_segment.?, uri_segment.?)) {
             return false;
         }
     }
 }
 
-test "matchUris" {
+test "matchUris basic" {
     try std.testing.expect(matchUris("one/*/three", "one/two/three"));
     try std.testing.expect(matchUris("/one", "/one"));
     try std.testing.expect(!matchUris("/one", "/one/"));
     try std.testing.expect(!matchUris("/one/", "/one"));
+}
+
+test "matchUris wildcards" {
     try std.testing.expect(matchUris("/*/*/what", "/one/two/what"));
     try std.testing.expect(!matchUris("/one/two/*", "/one/two/three/four"));
+}
+
+test "matchUris expansions" {
+    try std.testing.expect(matchUris("/one/**/four", "/one/two/three/four"));
+    try std.testing.expect(matchUris("/one/**", "/one/two/three/four"));
+    try std.testing.expect(matchUris("/one/**/four/**/eight", "/one/two/three/four/five/six/seven/eight"));
+    try std.testing.expect(!matchUris("/one/**/one", "/one/one")); // ** doesn't match zero segments
 }

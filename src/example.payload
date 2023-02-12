@@ -113,3 +113,10 @@ EOF
 /path/*/ok
 @ path[2] == 'hmm'
 {"result": 18}
+
+/path/**/ok
+@ path[2] == 'hmm' and path[3] == 'perhaps'
+{"result": 19}
+
+/path/**
+{"result": 20}

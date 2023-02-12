@@ -145,6 +145,16 @@ You can specify wildcards on the path:
     @ path[2] == 'path'
     { "ok", true }
 
+Use `**` to match 1+ segments:
+
+    # Could invoke as `curl localhost:3131/one/two/three/four/get/1234`
+    /**/get/1234
+    { "ok", true }
+
+    # Works as a catch-all rule
+    /**
+    { "anything": "at all" }
+
 In all, the lua expressions have access to the following variables:
 
     method ... a string
