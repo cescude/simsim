@@ -98,3 +98,18 @@ EOF
 
 /headers/switch
 {"result": 16}
+
+#
+# Matches based on path components
+#
+
+/path/get/ok
+@ path[0] == '/path/get/ok'
+@ path[1] == 'path'
+@ path[2] == 'get'
+@ path[3] == 'ok'
+{"result": 17}
+
+/path/*/ok
+@ path[2] == 'hmm'
+{"result": 18}

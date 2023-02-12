@@ -39,7 +39,7 @@ called `payload` to define HTTP endpoints.
     Definitions pulled from main-definitions
 
 Note that the files are reparsed on each request, so you may edit them
-while simsim is running, and see the results immediately.
+while simsim is running and see the results immediately.
 
 ## Payload File
 
@@ -129,12 +129,28 @@ If you care about the HTTP method, that can be checked as well:
     @ method == 'GET'
     { "type": "Getted" }
 
+You can specify wildcards on the path:
+
+    # All three of these definitions are the same!
+    
+    /some/path
+    { "ok", true }
+
+    /*/*
+    @ path[0] == '/some/path'
+    { "ok", true }
+
+    /*/*
+    @ path[1] == 'some'
+    @ path[2] == 'path'
+    { "ok", true }
+
 In all, the lua expressions have access to the following variables:
 
-    method (a string)
-    uri (a string)
-    proto (the protocol)
-    body (a string)
-    query (a table, contains key/vals corresponding to the http query string)
-    form (a table, the result of parsing the request body as x-www-form-encoded)
-    json (a table, the result of parsing the request body as JSON)
+    method ... a string
+    path   ... an array (ok, a table), path[0] is the full path, path[1] is the first segment, etc
+    proto  ... a string
+    body   ... a string
+    query  ... a table, contains key/vals corresponding to the http query string
+    form   ... a table, the result of parsing the request body as x-www-form-encoded
+    json   ... a table, the result of parsing the request body as JSON

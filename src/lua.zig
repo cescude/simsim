@@ -45,9 +45,29 @@ pub fn eval(self: @This(), str: []const u8, msg: c.mg_http_message) bool {
     defer self.allocator.free(stmt);
 
     self.setGlobalString("method", msg.method);
-    self.setGlobalString("uri", msg.uri);
     self.setGlobalString("proto", msg.proto);
     self.setGlobalString("body", msg.body);
+
+    // Setup the path variable
+    if (msg.uri.ptr) |uri_ptr| {
+        c.lua_createtable(self.L, 0, 0);
+
+        _ = c.lua_pushlstring(self.L, uri_ptr, msg.uri.len);
+        c.lua_seti(self.L, -2, 0);
+
+        if (msg.uri.len > 0) {
+            var path_iter = std.mem.split(u8, uri_ptr[1..msg.uri.len], "/");
+            var idx: c_longlong = 0;
+
+            while (path_iter.next()) |segment| {
+                idx += 1;
+                _ = c.lua_pushlstring(self.L, segment.ptr, segment.len);
+                c.lua_seti(self.L, -2, idx);
+            }
+        }
+
+        c.lua_setglobal(self.L, "path");
+    }
 
     // These may get overridden below
     makeDummyTable(self, "query");

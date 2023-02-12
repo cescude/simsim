@@ -329,6 +329,17 @@ test "Lua: Request headers" {
     try verifyTestCases(std.testing.allocator, payload, &cases);
 }
 
+test "Lua: Path segments" {
+    const payload = @embedFile("example.payload");
+
+    comptime var cases = [_]TestCase{
+        .{ mkmsg("/path/get/ok", "", ""), resultStr("17") },
+        .{ mkmsg("/path/hmm/ok", "", ""), resultStr("18") },
+    };
+
+    try verifyTestCases(std.testing.allocator, payload, &cases);
+}
+
 test "Response headers are transmitted properly" {
     const payload: []const u8 = @embedFile("example.payload");
 
