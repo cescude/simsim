@@ -89,7 +89,7 @@ EOF
 #
 
 /headers/switch
-@ headers.xResponseType == '1'
+@ headers.XResponseType == '1'
 {"result": 14}
 
 /headers/switch

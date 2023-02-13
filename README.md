@@ -111,6 +111,23 @@ Or if a form has been submitted, you can _also_ check for that:
     @ form.user_id == '1234'
     { "favorite_color": "blue" }
 
+Request headers are stored in a table called `headers`:
+
+    # eg. `curl localhost:3131/some/api -H 'One-Two-Three: Four'`
+
+    /some/api
+    @ headers['One-Two-Three'] == 'Four'
+    { "result": true }
+
+Alternately, if you're worried about case sensitivity of the provided
+header (was it `x-header` or `X-Header`?), CamelCase versions are
+provided as well:
+
+    /some/api
+    @ headers.OneTwoThree == 'Four'
+    { "result": true }
+    
+
 If multiple guards are provided, all must match:
 
     /some/api
@@ -157,10 +174,11 @@ Use `**` to match 1+ segments:
 
 In all, the lua expressions have access to the following variables:
 
-    method ... a string
-    path   ... an array (ok, a table), path[0] is the full path, path[1] is the first segment, etc
-    proto  ... a string
-    body   ... a string
-    query  ... a table, contains key/vals corresponding to the http query string
-    form   ... a table, the result of parsing the request body as x-www-form-encoded
-    json   ... a table, the result of parsing the request body as JSON
+    method  ... a string
+    path    ... an array (ok, a table), path[0] is the full path, path[1] is the first segment, etc
+    proto   ... a string
+    body    ... a string
+    headers ... a table, key/vals for each header, plus camel-cased keys
+    query   ... a table, contains key/vals corresponding to the http query string
+    form    ... a table, the result of parsing the request body as x-www-form-encoded
+    json    ... a table, the result of parsing the request body as JSON

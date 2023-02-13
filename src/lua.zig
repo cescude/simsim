@@ -149,7 +149,7 @@ fn toCamelCaseZ(dst: [:0]u8, src: anytype) void {
     var src_idx: usize = 0;
     var dst_idx: usize = 0;
 
-    var make_upper = false; // first character isn't upcased
+    var make_upper = true; // first character is upcased
     while (src_idx < src.len and dst_idx < dst.len) {
         switch (src.ptr[src_idx]) {
             '-' => {
@@ -175,11 +175,11 @@ fn toCamelCaseZ(dst: [:0]u8, src: anytype) void {
 
 test "toCamelCaseZ" {
     const results = [_][2][]const u8{
-        .{ "abcDef", "abc-def-" },
-        .{ "abcDef", "abc-DEF" },
-        .{ "abcDef", "abc-def-" },
-        .{ "abcDef", "abc--def--" },
-        .{ "abcdef", "abcdef" },
+        .{ "AbcDef", "abc-def-" },
+        .{ "AbcDef", "abc-DEF" },
+        .{ "AbcDef", "abc-def-" },
+        .{ "AbcDef", "ABC--def--" },
+        .{ "Abcdef", "abcdef" },
     };
 
     for (results) |pair| {
