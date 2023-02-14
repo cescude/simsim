@@ -1,5 +1,6 @@
 /
-> Content-type: text/html
+HTTP/1.1 200 OK
+Content-type: text/html
 BODY
 <ul>
   <li><a href="/json">/json</a>
@@ -21,7 +22,7 @@ BODY
 }
 
 /csv
-> Content-type: application/csv
+Content-type: application/csv
 CSV
 header1, header2, header3
 1,2,3
@@ -30,7 +31,7 @@ header1, header2, header3
 CSV
 
 /plain/text
-> Content-type: text/plain
+Content-type: text/plain
 TEXT
 Here's some...
 
@@ -58,3 +59,8 @@ TEXT
 
 /form
 { "result": "Hmm..." }
+
+/passthrough
+HTTP/1.1 307 Redirect
+Location: http://localhost:3131/rand
+

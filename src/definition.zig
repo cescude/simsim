@@ -5,6 +5,7 @@ const c = externs.c;
 const Lua = @import("lua.zig");
 
 uri: []const u8,
+status_line: ?[]const u8,
 guards: std.ArrayList([]const u8),
 headers: std.ArrayList([]const u8),
 body: []const u8,
@@ -15,6 +16,7 @@ const Definition = @This();
 pub fn init(allocator: std.mem.Allocator, uri: []const u8) Definition {
     return .{
         .uri = uri,
+        .status_line = null,
         .guards = std.ArrayList([]const u8).init(allocator),
         .headers = std.ArrayList([]const u8).init(allocator),
         .body = "",

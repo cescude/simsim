@@ -78,7 +78,12 @@ fn handleHttpRequest(conn: *c.mg_connection, msg: *c.mg_http_message, file_names
         }
         std.debug.print("\n", .{});
 
-        _ = c.mg_printf(conn, "HTTP/1.1 200 OK\r\n");
+        if (defn.status_line) |status_line| {
+            _ = c.mg_printf(conn, "%.*s\r\n", status_line.len, status_line.ptr);
+        } else {
+            _ = c.mg_printf(conn, "HTTP/1.1 200 OK\r\n");
+        }
+
         for (defn.headers.items) |hdr| {
             _ = c.mg_printf(conn, "%.*s\r\n", hdr.len, hdr.ptr);
         }
@@ -130,25 +135,35 @@ fn findDefinition(allocator: std.mem.Allocator, payload: []const u8, msg: c.mg_h
 fn readDefinition(defn: *Definition, lines: *std.mem.SplitIterator(u8)) !void {
     var content_start: usize = undefined;
 
-    // Read headers?
+    // Read guards until we find a body
     while (lines.next()) |line| {
         var trimmed = std.mem.trim(u8, line, &std.ascii.whitespace);
 
-        if (trimmed.len == 0) continue;
-
+        if (trimmed.len == 0) {
+            defn.body = "";
+            return;
+        }
         if (std.mem.startsWith(u8, trimmed, "#")) {
             continue;
         }
 
-        if (std.mem.startsWith(u8, trimmed, "@")) {
-            var grd = std.mem.trim(u8, trimmed[1..], &std.ascii.whitespace);
-            try defn.guards.append(grd);
+        if (std.mem.startsWith(u8, trimmed, "HTTP/1.")) {
+            if (defn.status_line == null) {
+                defn.status_line = trimmed;
+            } else {
+                return error.DuplicateStatusLinesInDefinition;
+            }
             continue;
         }
 
-        if (std.mem.startsWith(u8, trimmed, ">")) {
-            var hdr = std.mem.trim(u8, trimmed[1..], &std.ascii.whitespace);
-            try defn.headers.append(hdr);
+        if (std.mem.startsWith(u8, trimmed, "@")) {
+            var guard = std.mem.trim(u8, trimmed[1..], &std.ascii.whitespace);
+            try defn.guards.append(guard);
+            continue;
+        }
+
+        if (std.mem.indexOfScalar(u8, trimmed, ':') != null) {
+            try defn.headers.append(trimmed);
             continue;
         }
 
@@ -164,6 +179,9 @@ fn readDefinition(defn: *Definition, lines: *std.mem.SplitIterator(u8)) !void {
         defn.body = try readDelimitedContent(lines, trimmed, content_start);
         return;
     }
+
+    // If we ran out of lines, just assume an empty body
+    defn.body = "";
 }
 
 fn readJsonContent(_lines: *std.mem.SplitIterator(u8), json_start_offset: usize) ![]const u8 {
