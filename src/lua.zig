@@ -203,7 +203,7 @@ fn parseJson(L: *c.lua_State, json: []const u8) !void {
             c.lua_createtable(L, 0, 0);
             try readObject(L, &stream);
         },
-        else => unreachable,
+        else => return error.ExpectedJsonToStartWithAnObject,
     };
 }
 
@@ -211,7 +211,12 @@ fn tokenStr(s: *std.json.TokenStream, t: anytype) []const u8 {
     return s.slice[s.i - t.count - 1 .. s.i - 1];
 }
 
-fn readObject(L: *c.lua_State, stream: *std.json.TokenStream) !void {
+const JsonReadError = error{
+    UnexpectedKeyType,
+    UnexpectedToken,
+} || std.fmt.ParseIntError || std.fmt.ParseFloatError || std.json.TokenStream.Error;
+
+fn readObject(L: *c.lua_State, stream: *std.json.TokenStream) JsonReadError!void {
     while (true) {
         // Read the key
         if (try stream.next()) |t| switch (t) {
@@ -220,7 +225,7 @@ fn readObject(L: *c.lua_State, stream: *std.json.TokenStream) !void {
                 const slice = tokenStr(stream, s);
                 _ = c.lua_pushlstring(L, slice.ptr, slice.len);
             },
-            else => unreachable,
+            else => return error.UnexpectedKeyType,
         };
 
         // Read the value
@@ -229,10 +234,12 @@ fn readObject(L: *c.lua_State, stream: *std.json.TokenStream) !void {
                 c.lua_createtable(L, 0, 0);
                 try readObject(L, stream);
             },
+            .ObjectEnd => return error.UnexpectedToken,
             .ArrayBegin => {
                 c.lua_createtable(L, 0, 0);
                 try readArray(L, stream);
             },
+            .ArrayEnd => return error.UnexpectedToken,
             .String => |s| {
                 const slice = tokenStr(stream, s);
                 _ = c.lua_pushlstring(L, slice.ptr, slice.len);
@@ -247,18 +254,25 @@ fn readObject(L: *c.lua_State, stream: *std.json.TokenStream) !void {
             .True => c.lua_pushboolean(L, 1),
             .False => c.lua_pushboolean(L, 0),
             .Null => c.lua_pushnil(L),
-            else => unreachable,
         };
 
         c.lua_settable(L, -3);
     }
 }
 
-fn readArray(L: *c.lua_State, stream: *std.json.TokenStream) !void {
+fn readArray(L: *c.lua_State, stream: *std.json.TokenStream) JsonReadError!void {
     var i: c_longlong = 1;
     while (true) {
         if (try stream.next()) |t| switch (t) {
-            .ObjectEnd => unreachable,
+            .ObjectBegin => {
+                c.lua_createtable(L, 0, 0);
+                try readObject(L, stream);
+            },
+            .ObjectEnd => return error.UnexpectedToken,
+            .ArrayBegin => {
+                c.lua_createtable(L, 0, 0);
+                try readArray(L, stream);
+            },
             .ArrayEnd => return,
             .String => |s| {
                 const slice = tokenStr(stream, s);
@@ -274,7 +288,6 @@ fn readArray(L: *c.lua_State, stream: *std.json.TokenStream) !void {
             .True => c.lua_pushboolean(L, 1),
             .False => c.lua_pushboolean(L, 0),
             .Null => c.lua_pushnil(L),
-            else => return error.PleaseImplementMeArray,
         };
 
         c.lua_seti(L, -2, i);
