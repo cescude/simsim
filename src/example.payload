@@ -3,12 +3,12 @@
 #
 
 /test/json
-> X-Response-Type: 1
-> X-Another-Header: Here
+X-Response-Type: 1
+X-Another-Header: Here
 {"result": 1}
 
 /test/raw
-> X-Response-Type: 2
+X-Response-Type: 2
 EOF
 1,2,3
 4,5,6

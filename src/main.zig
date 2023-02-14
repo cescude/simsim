@@ -162,11 +162,6 @@ fn readDefinition(defn: *Definition, lines: *std.mem.SplitIterator(u8)) !void {
             continue;
         }
 
-        if (std.mem.indexOfScalar(u8, trimmed, ':') != null) {
-            try defn.headers.append(trimmed);
-            continue;
-        }
-
         // Found a json payload, read content until we have a valid JSON object
         if (std.mem.startsWith(u8, trimmed, "{")) {
             content_start = (lines.index orelse lines.buffer.len) - line.len - 1;
@@ -174,7 +169,14 @@ fn readDefinition(defn: *Definition, lines: *std.mem.SplitIterator(u8)) !void {
             return;
         }
 
-        // `trimmed` is a delimeter, read content section until we find another copy of it
+        // Or perhaps it's a header definition...
+        if (std.mem.indexOfScalar(u8, trimmed, ':') != null) {
+            try defn.headers.append(trimmed);
+            continue;
+        }
+
+        // OK, if it's none of the above, `trimmed` is a delimeter.
+        // Read content section until we find another copy of it
         content_start = (lines.index orelse lines.buffer.len);
         defn.body = try readDelimitedContent(lines, trimmed, content_start);
         return;

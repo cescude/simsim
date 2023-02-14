@@ -53,7 +53,7 @@ Define an endpoint that returns a simple JSON response:
 Define an endpoint that returns non-JSON data:
 
     /v2/of/some/api
-    > Content-type: application/csv
+    Content-type: application/csv
     EOF
     h1,h2,h3
     1,2,3
@@ -63,18 +63,19 @@ Define an endpoint that returns non-JSON data:
 Note that `EOF` can be anything:
 
     /v2/of/some/api
-    > Content-type: application/csv
+    Content-type: application/csv
     ANYTHING_ELSE
     h1,h2,h3
     1,2,3
     4,5,6
     ANYTHING_ELSE
 
-As in the prior examples, response headers can be supplied with the `>` syntax:
+As in the prior examples, response headers can be specified before the
+content definition:
 
     /v3/of/some/api
-    > X-My-Custom-Header: this thing!
-    > X-Another-One: agreed!
+    X-My-Custom-Header: this thing!
+    X-Another-One: agreed!
     { "result": true }
 
 Can use lua to perform additional checks on the request to aid in matching:
@@ -94,6 +95,26 @@ endpoints (these are evaluated top to bottom)
 
     /some/api/favorite_color
     { "favorite_color": "who knows?" }
+
+You can return alternate status codes:
+
+    /bad/fail
+    HTTP/1.1 500 Internal error
+    { "result": false }
+
+    # No body defined on this one
+    /flaky/fail
+    @ math.random() < 0.3
+    HTTP/1.1 500 Internal error
+
+    /flaky/fail
+    { "result": true }
+
+Even use status codes to redirect elsewhere:
+
+    /redirect
+    HTTP/1.1 307 See other
+    Location: http://localhost:3131/some/other/url
 
 If a JSON payload was POST'ed to the endpoint, you can check for that:
 
