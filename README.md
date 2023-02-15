@@ -99,13 +99,13 @@ endpoints (these are evaluated top to bottom)
 You can return alternate status codes:
 
     /bad/fail
-    HTTP/1.1 500 Internal error
+    500 Internal error
     { "result": false }
 
     # No body defined on this one
     /flaky/fail
     @ math.random() < 0.3
-    HTTP/1.1 500 Internal error
+    500 Internal error
 
     /flaky/fail
     { "result": true }
@@ -113,7 +113,7 @@ You can return alternate status codes:
 Even use status codes to redirect elsewhere:
 
     /redirect
-    HTTP/1.1 307 See other
+    307 See other
     Location: http://localhost:3131/some/other/url
 
 If a JSON payload was POST'ed to the endpoint, you can check for that:

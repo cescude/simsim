@@ -79,7 +79,7 @@ fn handleHttpRequest(conn: *c.mg_connection, msg: *c.mg_http_message, file_names
         std.debug.print("\n", .{});
 
         if (defn.status_line) |status_line| {
-            _ = c.mg_printf(conn, "%.*s\r\n", status_line.len, status_line.ptr);
+            _ = c.mg_printf(conn, "HTTP/1.1 %.*s\r\n", status_line.len, status_line.ptr);
         } else {
             _ = c.mg_printf(conn, "HTTP/1.1 200 OK\r\n");
         }
@@ -147,7 +147,7 @@ fn readDefinition(defn: *Definition, lines: *std.mem.SplitIterator(u8)) !void {
             continue;
         }
 
-        if (std.mem.startsWith(u8, trimmed, "HTTP/1.")) {
+        if (isStatusLine(trimmed)) {
             if (defn.status_line == null) {
                 defn.status_line = trimmed;
             } else {
@@ -184,6 +184,22 @@ fn readDefinition(defn: *Definition, lines: *std.mem.SplitIterator(u8)) !void {
 
     // If we ran out of lines, just assume an empty body
     defn.body = "";
+}
+
+// line should be something like "200 OK" or "404 Not Found"
+fn isStatusLine(line: []const u8) bool {
+    return line.len > 3 and std.ascii.isWhitespace(line[3]) and std.mem.lessThan(u8, "099", line[0..3]) and std.mem.lessThan(u8, line[0..3], "600");
+}
+
+test "isStatusLine" {
+    try std.testing.expect(isStatusLine("200 OK"));
+    try std.testing.expect(isStatusLine("404 Not Found"));
+    try std.testing.expect(isStatusLine("100 Info time"));
+    try std.testing.expect(isStatusLine("599 Really?"));
+    try std.testing.expect(!isStatusLine("99 Invalid"));
+    try std.testing.expect(!isStatusLine("9   Ok"));
+    try std.testing.expect(!isStatusLine("600 Bad times"));
+    try std.testing.expect(!isStatusLine("    Ok then"));
 }
 
 fn readJsonContent(_lines: *std.mem.SplitIterator(u8), json_start_offset: usize) ![]const u8 {

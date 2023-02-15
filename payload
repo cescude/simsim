@@ -1,5 +1,5 @@
 /
-HTTP/1.1 200 OK
+200 OK
 Content-type: text/html
 BODY
 <ul>
@@ -60,7 +60,7 @@ TEXT
 /form
 { "result": "Hmm..." }
 
-/passthrough
-HTTP/1.1 307 Redirect
+/redirect/to/rand
+307 Redirect
 Location: http://localhost:3131/rand
 
