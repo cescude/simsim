@@ -83,10 +83,10 @@ pub fn eval(self: @This(), str: []const u8, msg: c.mg_http_message) bool {
     for (msg.headers) |hdr| {
         if (hdr.name.ptr == null) continue;
 
-        var camelCaseName: [200:0]u8 = undefined;
-        toCamelCaseZ(&camelCaseName, hdr.name);
+        var buffer: [200]u8 = undefined;
+        var camelCaseName = toCamelCase(&buffer, hdr.name.ptr[0..hdr.name.len]);
 
-        _ = c.lua_pushstring(self.L, &camelCaseName);
+        _ = c.lua_pushlstring(self.L, camelCaseName.ptr, camelCaseName.len);
         _ = c.lua_pushlstring(self.L, hdr.value.ptr, hdr.value.len);
         c.lua_settable(self.L, -3);
 
@@ -145,7 +145,7 @@ fn exec(self: @This(), str: []const u8) !void {
     }
 }
 
-fn toCamelCaseZ(dst: [:0]u8, src: anytype) void {
+fn toCamelCase(dst: []u8, src: []const u8) []const u8 {
     var src_idx: usize = 0;
     var dst_idx: usize = 0;
 
@@ -170,10 +170,10 @@ fn toCamelCaseZ(dst: [:0]u8, src: anytype) void {
         }
     }
 
-    dst[dst_idx] = 0;
+    return dst[0..dst_idx];
 }
 
-test "toCamelCaseZ" {
+test "toCamelCase" {
     const results = [_][2][]const u8{
         .{ "AbcDef", "abc-def-" },
         .{ "AbcDef", "abc-DEF" },
@@ -183,10 +183,8 @@ test "toCamelCaseZ" {
     };
 
     for (results) |pair| {
-        var ccz: [200:0]u8 = undefined;
-        toCamelCaseZ(&ccz, pair[1]);
-        try std.testing.expectEqual(pair[0].len, std.mem.indexOfSentinel(u8, 0, &ccz));
-        try std.testing.expectEqualSlices(u8, pair[0], ccz[0..pair[0].len]);
+        var ccz: [200]u8 = undefined;
+        try std.testing.expectEqualSlices(u8, pair[0], toCamelCase(&ccz, pair[1]));
     }
 }
 
