@@ -6,6 +6,54 @@ const Definition = @import("definition.zig");
 const externs = @import("externs.zig");
 const c = externs.c;
 
+const Payload = struct {
+    name: []const u8,
+    stat: std.fs.Dir.Stat,
+    data: []u8,
+    arena: std.heap.ArenaAllocator,
+
+    pub fn init(allocator: std.mem.Allocator, file_name: []const u8) !Payload {
+        var stat = try std.fs.cwd().statFile(file_name);
+        var arena = std.heap.ArenaAllocator.init(allocator);
+
+        var file = try std.fs.cwd().openFile(file_name, .{});
+        defer file.close();
+
+        var data = try file.readToEndAlloc(arena.allocator(), 1 << 30);
+        errdefer arena.allocator().free(data);
+
+        return .{
+            .name = file_name,
+            .stat = stat,
+            .data = data,
+            .arena = arena,
+        };
+    }
+
+    pub fn deinit(self: *Payload) void {
+        self.arena.deinit();
+    }
+
+    pub fn refresh(self: *Payload) !void {
+        var stat = try std.fs.cwd().statFile(self.name);
+        if (stat.size == self.stat.size and stat.mtime == self.stat.mtime) {
+            return;
+        }
+
+        std.debug.print("Reloading definitions from {s}\n", .{self.name});
+
+        _ = self.arena.reset(std.heap.ArenaAllocator.ResetMode.retain_capacity); // Invalidates self.data
+
+        var file = try std.fs.cwd().openFile(self.name, .{});
+        defer file.close();
+
+        self.data = try file.readToEndAlloc(self.arena.allocator(), 1 << 30);
+        errdefer self.arena.allocator().free(self.data);
+
+        self.stat = stat;
+    }
+};
+
 pub fn main() !void {
     var zopts = ZOpts.init(std.heap.page_allocator);
     defer zopts.deinit();
@@ -41,10 +89,22 @@ pub fn main() !void {
         std.debug.print("Definitions pulled from {s}\n", .{file});
     }
 
-    try Http.serve(host, port, [][]const u8, files, handleHttpRequest);
+    var payloads = try std.heap.page_allocator.alloc(Payload, files.len);
+    defer std.heap.page_allocator.free(payloads);
+
+    for (files) |file_name, i| {
+        payloads[i] = try Payload.init(std.heap.page_allocator, file_name);
+    }
+    defer {
+        for (payloads) |*payload| {
+            payload.deinit();
+        }
+    }
+
+    try Http.serve(host, port, []Payload, payloads, handleHttpRequest);
 }
 
-fn handleHttpRequest(conn: *c.mg_connection, msg: *c.mg_http_message, file_names: [][]const u8) void {
+fn handleHttpRequest(conn: *c.mg_connection, msg: *c.mg_http_message, payloads: []Payload) void {
     var uri = msg.uri.ptr[0..msg.uri.len];
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -52,29 +112,23 @@ fn handleHttpRequest(conn: *c.mg_connection, msg: *c.mg_http_message, file_names
 
     var allocator = arena.allocator();
 
-    for (file_names) |file_name| {
+    for (payloads) |*payload| {
         defer _ = arena.reset(std.heap.ArenaAllocator.ResetMode.retain_capacity);
 
-        var file = std.fs.cwd().openFile(file_name, .{}) catch |err| {
-            std.debug.print("Error opening file {s}, {}\n", .{ file_name, err });
-            continue;
-        };
-        defer file.close();
-
-        var buffer = file.readToEndAlloc(allocator, 1 << 30) catch |err| {
-            std.debug.print("Error reading file {s}, {}\n", .{ file_name, err });
+        payload.refresh() catch |err| {
+            std.debug.print("Error refreshing file data for {s}, {}\n", .{ payload.name, err });
             continue;
         };
 
-        var defn = findDefinition(allocator, buffer, msg.*) catch |err| {
+        var defn = findDefinition(allocator, payload.data, msg.*) catch |err| {
             std.debug.print("Error while searching for definition {}\n", .{err});
             continue;
         } orelse continue;
         defer defn.deinit();
 
         std.debug.print("Matched: {s}", .{defn.uri});
-        if (file_names.len > 1) {
-            std.debug.print(" ({s})", .{file_name});
+        if (payloads.len > 1) {
+            std.debug.print(" ({s})", .{payload.name});
         }
         std.debug.print("\n", .{});
 
