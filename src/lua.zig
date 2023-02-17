@@ -39,6 +39,11 @@ fn makeDummyTable(self: @This(), name: [:0]const u8) void {
 }
 
 pub fn eval(self: @This(), str: []const u8, msg: c.mg_http_message) bool {
+    // Reset the lua stack at the end, so it doesn't slowly grow with
+    // each request.
+    var top_of_stack = c.lua_gettop(self.L);
+    defer c.lua_settop(self.L, top_of_stack);
+
     var stmt = std.fmt.allocPrintZ(self.allocator, "return {s}", .{str}) catch {
         return false;
     };

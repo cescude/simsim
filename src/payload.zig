@@ -2,26 +2,41 @@ const std = @import("std");
 const externs = @import("externs.zig");
 const c = externs.c;
 const Definition = @import("definition.zig");
-
+const Lua = @import("lua.zig");
 const Payload = @This();
 
 name: []const u8,
 stat: ?std.fs.Dir.Stat,
 data: []u8, // All the bytes in the file, used as backing memory for the definitions.
 defns: []Definition,
+lua: Lua,
 arena: std.heap.ArenaAllocator,
 
 pub fn init(allocator: std.mem.Allocator, file_name: []const u8) !Payload {
-    // Each payload gets its own arena of memory, so we can clear
-    // things independently of each other.
+    // Use an arena for data and defns...if we clear one we should
+    // clear them all.
     var arena = std.heap.ArenaAllocator.init(allocator);
     errdefer arena.deinit();
 
-    return .{ .name = file_name, .stat = null, .data = "", .arena = arena, .defns = &[0]Definition{} };
+    // However, lua should be managed separately. It's ok to just
+    // initialize this and then keep it allocated for the lifetime of
+    // this payload.
+    var lua = try Lua.init(allocator);
+    errdefer lua.deinit();
+
+    return .{
+        .name = file_name,
+        .stat = null,
+        .data = "",
+        .lua = lua,
+        .defns = &[0]Definition{},
+        .arena = arena,
+    };
 }
 
 pub fn deinit(self: *Payload) void {
-    self.arena.deinit();
+    defer self.arena.deinit();
+    defer self.lua.deinit();
 }
 
 pub fn loadDefinitions(self: *Payload) !void {
@@ -209,12 +224,12 @@ fn readDelimitedContent(_lines: *std.mem.SplitIterator(u8), delimeter: []const u
 }
 
 pub fn findDefinition(self: Payload, msg: c.mg_http_message) !?Definition {
-    return try findDefinitionInArray(self.defns, msg);
+    return try findDefinitionInArray(self.defns, self.lua, msg);
 }
 
-fn findDefinitionInArray(defns: []const Definition, msg: c.mg_http_message) !?Definition {
+fn findDefinitionInArray(defns: []const Definition, lua: Lua, msg: c.mg_http_message) !?Definition {
     for (defns) |defn| {
-        if (try defn.match(msg)) {
+        if (try defn.match(lua, msg)) {
             return defn;
         }
     }
@@ -267,8 +282,11 @@ fn verifyTestCases(allocator: std.mem.Allocator, payload: []const u8, cases: []T
         allocator.free(defns);
     }
 
+    var lua = try Lua.init(allocator);
+    defer lua.deinit();
+
     for (cases) |case, idx| {
-        if (try findDefinitionInArray(defns, case[0])) |defn| {
+        if (try findDefinitionInArray(defns, lua, case[0])) |defn| {
             try std.testing.expectEqualSlices(u8, case[1], defn.body);
         } else {
             std.debug.print("Case #{d} failed, no matching definition found!\n", .{idx + 1});
@@ -374,7 +392,9 @@ test "Response headers are transmitted properly" {
         std.testing.allocator.free(defns);
     }
 
-    if (try findDefinitionInArray(defns, mkmsg("/test/json", "", ""))) |defn| {
+    var lua = try Lua.init(std.testing.allocator);
+
+    if (try findDefinitionInArray(defns, lua, mkmsg("/test/json", "", ""))) |defn| {
         // Three headers (two defined + Content-type added)
         try std.testing.expectEqual(@as(usize, 3), defn.headers.items.len);
         try std.testing.expectEqualSlices(u8, "X-Response-Type: 1", defn.headers.items[0]);
@@ -382,7 +402,7 @@ test "Response headers are transmitted properly" {
         try std.testing.expectEqualSlices(u8, "Content-Type: application/json", defn.headers.items[2]);
     }
 
-    if (try findDefinitionInArray(defns, mkmsg("/test/raw", "", ""))) |defn| {
+    if (try findDefinitionInArray(defns, lua, mkmsg("/test/raw", "", ""))) |defn| {
         // Just one header defined (not a JSON body, so no implicit content-type added)
         try std.testing.expectEqual(@as(usize, 1), defn.headers.items.len);
         try std.testing.expectEqualSlices(u8, "X-Response-Type: 2", defn.headers.items[0]);

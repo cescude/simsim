@@ -29,13 +29,10 @@ pub fn deinit(self: Definition) void {
     self.headers.deinit();
 }
 
-pub fn match(self: Definition, msg: c.mg_http_message) !bool {
+pub fn match(self: Definition, lua: Lua, msg: c.mg_http_message) !bool {
     if (!matchUris(self.uri, msg.uri.ptr[0..msg.uri.len])) {
         return false;
     }
-
-    var lua = try Lua.init(self.allocator);
-    defer lua.deinit();
 
     for (self.guards.items) |grd| {
         if (!lua.eval(grd, msg)) return false;
