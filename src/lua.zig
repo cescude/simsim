@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = std.log;
 const externs = @import("externs.zig");
 const c = externs.c;
 
@@ -133,7 +134,7 @@ pub fn eval(self: @This(), str: []const u8, msg: c.mg_http_message) bool {
     }
 
     self.exec(stmt) catch {
-        std.debug.print("{s}\n", .{c.lua_tolstring(self.L, -1, null)});
+        log.err("Error executing guard: {s}", .{c.lua_tolstring(self.L, -1, null)});
         return false;
     };
 
@@ -361,5 +362,5 @@ fn decodeUri(buf: []u8, str: []const u8) ![]const u8 {
 test "decodeUri" {
     var dec: [20]u8 = undefined;
     var enc = "one%20two&on%6f";
-    std.debug.print("decodeUri: orig={s}, decoded={s}\n", .{ enc, try decodeUri(&dec, enc) });
+    try std.testing.expectEqualSlices(u8, "one two&ono", try decodeUri(&dec, enc));
 }

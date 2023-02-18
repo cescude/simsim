@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = std.log;
 const ZOpts = @import("zopts");
 const Http = @import("http.zig");
 const Definition = @import("definition.zig");
@@ -43,7 +44,7 @@ pub fn main() !void {
         files = &default_files_array;
     }
 
-    std.debug.print("Starting up the server at http://{s}:{}\n", .{ host, port });
+    log.info("Starting up the server at http://{s}:{}", .{ host, port });
 
     var payloads = try std.heap.page_allocator.alloc(Payload, files.len);
     defer std.heap.page_allocator.free(payloads);
@@ -65,20 +66,20 @@ fn handleHttpRequest(conn: *c.mg_connection, msg: *c.mg_http_message, payloads: 
 
     for (payloads) |*payload| {
         payload.loadDefinitions() catch |err| {
-            std.debug.print("Error refreshing file data for {s}, {}\n", .{ payload.name, err });
+            log.err("Error refreshing file data for {s}, {}", .{ payload.name, err });
             continue;
         };
 
         var defn = payload.findDefinition(msg.*) catch |err| {
-            std.debug.print("Error while searching for definition {}\n", .{err});
+            log.err("Error while searching for definition {}", .{err});
             continue;
         } orelse continue;
 
-        std.debug.print("Matched: {s}", .{defn.uri});
         if (payloads.len > 1) {
-            std.debug.print(" ({s})", .{payload.name});
+            log.info("Matched {s} ({s})", .{ defn.uri, payload.name });
+        } else {
+            log.info("Matched: {s}", .{defn.uri});
         }
-        std.debug.print("\n", .{});
 
         if (defn.status_line) |status_line| {
             _ = c.mg_printf(conn, "HTTP/1.1 %.*s\r\n", status_line.len, status_line.ptr);
@@ -95,6 +96,6 @@ fn handleHttpRequest(conn: *c.mg_connection, msg: *c.mg_http_message, payloads: 
         return;
     }
 
-    std.debug.print("No Match for {s}\n", .{uri});
+    log.info("No Match for {s}", .{uri});
     c.mg_http_reply(conn, 404, "", "");
 }

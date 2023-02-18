@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = std.log;
 const externs = @import("externs.zig");
 const c = externs.c;
 const Definition = @import("definition.zig");
@@ -48,7 +49,7 @@ pub fn loadDefinitions(self: *Payload) !void {
         }
     }
 
-    std.debug.print("Reading definitions from {s}\n", .{self.name});
+    log.info("Reading definitions from {s}", .{self.name});
 
     // Invalidate all memory allocated within this Payload (data, defns, etc)
     _ = self.arena.reset(std.heap.ArenaAllocator.ResetMode.retain_capacity);
