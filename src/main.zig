@@ -1,10 +1,10 @@
 const std = @import("std");
-const log = std.log;
 const ZOpts = @import("zopts");
 const Http = @import("http.zig");
 const Definition = @import("definition.zig");
 const Payload = @import("payload.zig");
 const externs = @import("externs.zig");
+const stdout = @import("stdout.zig");
 const c = externs.c;
 
 test {
@@ -44,7 +44,7 @@ pub fn main() !void {
         files = &default_files_array;
     }
 
-    log.info("Starting up the server at http://{s}:{}", .{ host, port });
+    stdout.print("Starting up the server at http://{s}:{}\n", .{ host, port });
 
     var payloads = try std.heap.page_allocator.alloc(Payload, files.len);
     defer std.heap.page_allocator.free(payloads);
@@ -58,7 +58,14 @@ pub fn main() !void {
         }
     }
 
-    try Http.serve(host, port, []Payload, payloads, handleHttpRequest);
+    try Http.serve([]Payload, .{
+        .addr = host,
+        .port = port,
+        .data = payloads,
+        .user_callback = handleHttpRequest,
+        .tick = 100,
+        .tick_callback = stdout.flush,
+    });
 }
 
 fn handleHttpRequest(conn: *c.mg_connection, msg: *c.mg_http_message, payloads: []Payload) void {
@@ -66,19 +73,22 @@ fn handleHttpRequest(conn: *c.mg_connection, msg: *c.mg_http_message, payloads: 
 
     for (payloads) |*payload| {
         payload.loadDefinitions() catch |err| {
-            log.err("Error refreshing file data for {s}, {}", .{ payload.name, err });
+            stdout.print("Error refreshing file data for {s}, {}\n", .{ payload.name, err });
             continue;
         };
 
-        var defn = payload.findDefinition(msg.*) catch |err| {
-            log.err("Error while searching for definition {}", .{err});
+        var result = payload.findDefinition(msg.*) catch |err| {
+            stdout.print("Error while searching for definition {}\n", .{err});
             continue;
         } orelse continue;
 
+        const defn = result[0];
+        const idx = result[1];
+
         if (payloads.len > 1) {
-            log.info("Matched {s} ({s})", .{ defn.uri, payload.name });
+            stdout.print("Matched #{} {s} ({s})\n", .{ idx + 1, defn.uri, payload.name });
         } else {
-            log.info("Matched: {s}", .{defn.uri});
+            stdout.print("Matched #{} {s}\n", .{ idx + 1, defn.uri });
         }
 
         if (defn.status_line) |status_line| {
@@ -96,6 +106,6 @@ fn handleHttpRequest(conn: *c.mg_connection, msg: *c.mg_http_message, payloads: 
         return;
     }
 
-    log.info("No Match for {s}", .{uri});
+    stdout.print("No Match for {s}\n", .{uri});
     c.mg_http_reply(conn, 404, "", "");
 }

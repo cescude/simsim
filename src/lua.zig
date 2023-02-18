@@ -1,6 +1,6 @@
 const std = @import("std");
-const log = std.log;
 const externs = @import("externs.zig");
+const stdout = @import("stdout.zig");
 const c = externs.c;
 
 L: *c.lua_State,
@@ -134,7 +134,7 @@ pub fn eval(self: @This(), str: []const u8, msg: c.mg_http_message) bool {
     }
 
     self.exec(stmt) catch {
-        log.err("Error executing guard: {s}", .{c.lua_tolstring(self.L, -1, null)});
+        stdout.print("Error executing guard: {s}\n", .{c.lua_tolstring(self.L, -1, null)});
         return false;
     };
 

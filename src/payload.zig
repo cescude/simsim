@@ -1,7 +1,7 @@
 const std = @import("std");
-const log = std.log;
 const externs = @import("externs.zig");
 const c = externs.c;
+const stdout = @import("stdout.zig");
 const Definition = @import("definition.zig");
 const Lua = @import("lua.zig");
 const Payload = @This();
@@ -49,7 +49,7 @@ pub fn loadDefinitions(self: *Payload) !void {
         }
     }
 
-    log.info("Reading definitions from {s}", .{self.name});
+    stdout.print("Reading definitions from {s}\n", .{self.name});
 
     // Invalidate all memory allocated within this Payload (data, defns, etc)
     _ = self.arena.reset(std.heap.ArenaAllocator.ResetMode.retain_capacity);
@@ -224,14 +224,19 @@ fn readDelimitedContent(_lines: *std.mem.SplitIterator(u8), delimeter: []const u
     return error.UnterminatedPayload;
 }
 
-pub fn findDefinition(self: Payload, msg: c.mg_http_message) !?Definition {
-    return try findDefinitionInArray(self.defns, self.lua, msg);
+pub fn findDefinition(self: Payload, msg: c.mg_http_message) !?struct { Definition, usize } {
+    var tuple = try findDefinitionInArray(self.defns, self.lua, msg);
+    if (tuple) |tup| {
+        // Can't coerce between two equivalent tuples, I guess?
+        return .{ tup[0], tup[1] };
+    }
+    return null;
 }
 
-fn findDefinitionInArray(defns: []const Definition, lua: Lua, msg: c.mg_http_message) !?Definition {
-    for (defns) |defn| {
+fn findDefinitionInArray(defns: []const Definition, lua: Lua, msg: c.mg_http_message) !?struct { Definition, usize } {
+    for (defns) |defn, idx| {
         if (try defn.match(lua, msg)) {
-            return defn;
+            return .{ defn, idx };
         }
     }
 
@@ -287,7 +292,8 @@ fn verifyTestCases(allocator: std.mem.Allocator, payload: []const u8, cases: []T
     defer lua.deinit();
 
     for (cases) |case, idx| {
-        if (try findDefinitionInArray(defns, lua, case[0])) |defn| {
+        if (try findDefinitionInArray(defns, lua, case[0])) |tup| {
+            const defn = tup[0];
             try std.testing.expectEqualSlices(u8, case[1], defn.body);
         } else {
             std.debug.print("Case #{d} failed, no matching definition found!\n", .{idx + 1});
@@ -395,7 +401,9 @@ test "Response headers are transmitted properly" {
 
     var lua = try Lua.init(std.testing.allocator);
 
-    if (try findDefinitionInArray(defns, lua, mkmsg("/test/json", "", ""))) |defn| {
+    if (try findDefinitionInArray(defns, lua, mkmsg("/test/json", "", ""))) |tup| {
+        const defn = tup[0];
+
         // Three headers (two defined + Content-type added)
         try std.testing.expectEqual(@as(usize, 3), defn.headers.items.len);
         try std.testing.expectEqualSlices(u8, "X-Response-Type: 1", defn.headers.items[0]);
@@ -403,7 +411,9 @@ test "Response headers are transmitted properly" {
         try std.testing.expectEqualSlices(u8, "Content-Type: application/json", defn.headers.items[2]);
     }
 
-    if (try findDefinitionInArray(defns, lua, mkmsg("/test/raw", "", ""))) |defn| {
+    if (try findDefinitionInArray(defns, lua, mkmsg("/test/raw", "", ""))) |tup| {
+        const defn = tup[0];
+
         // Just one header defined (not a JSON body, so no implicit content-type added)
         try std.testing.expectEqual(@as(usize, 1), defn.headers.items.len);
         try std.testing.expectEqualSlices(u8, "X-Response-Type: 2", defn.headers.items[0]);
