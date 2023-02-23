@@ -54,24 +54,25 @@ Define an endpoint that returns non-JSON data:
 
     /v2/of/some/api
     Content-type: application/csv
-    EOF
+    DATA
     h1,h2,h3
     1,2,3
     4,5,6
-    EOF
+    DATA
 
-Note that `EOF` can be anything:
+The word `DATA` from the previous example can be anything (as long as
+it doesn't look like a header)--
 
     /v2/of/some/api
     Content-type: application/csv
-    ANYTHING_ELSE
+    \\
     h1,h2,h3
     1,2,3
     4,5,6
-    ANYTHING_ELSE
+    \\
 
-As in the prior examples, response headers can be specified before the
-content definition:
+As seen before, response headers can be specified before the content
+definition:
 
     /v3/of/some/api
     X-My-Custom-Header: this thing!
@@ -80,7 +81,7 @@ content definition:
 
 Can use lua to perform additional checks on the request to aid in matching:
 
-    # Could invoke as `curl 'localhost:3131/some/api/favorite_color?user_id=1234'`
+    # Invoke as `curl 'localhost:3131/some/api/favorite_color?user_id=1234'`
     
     /some/api/favorite_color
     @ query.user_id == '1234'
@@ -113,7 +114,7 @@ You can return alternate status codes:
 Even use status codes to redirect elsewhere:
 
     /redirect
-    307 See other
+    307 Temporary Redirect
     Location: http://localhost:3131/some/other/url
 
 If a JSON payload was POST'ed to the endpoint, you can check for that:
@@ -192,6 +193,46 @@ Use `**` to match 1+ segments:
     # Works as a catch-all rule
     /**
     { "anything": "at all" }
+
+## Redirects
+
+Basic redirects can be done by setting the status to 3xx and providing
+a location header:
+
+    /v1/api
+    307 Elsewhere
+    Location: https://localhost:4433/v1/api
+
+However, if the url pattern matches the tail of the location header,
+simsim will substitute the requested url. This is useful for wildcard
+url patterns:
+
+    /get/*/name
+    307 Elsewhere
+    Location: http://example.com/v1/api/get/*/name
+
+In the prior example, requesting something like
+`http://localhost:3131/get/1234/name` will generate a redirect to
+`http://example.com/v1/api/get/1234/name`.
+
+You can use this to configure "fallthrough" rules that will send
+unmatched requests to the server you're mocking.
+
+    # The request we're trying to mock
+    /v1/api/get
+    { "data": [1,2,3,4] }
+
+    # Send all other v1 requests to server1
+    /v1/api/**
+    307 Temporary Redirect
+    Location: http://server1/v1/api/**
+
+    # For anything else, maybe send it to server2
+    /**
+    307 Temporary Redirect
+    Location: http://server2/**
+
+## Lua variables
 
 In all, the lua expressions have access to the following variables:
 
