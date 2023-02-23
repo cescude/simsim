@@ -94,8 +94,7 @@ fn readAllDefinitionsAlloc(allocator: std.mem.Allocator, payload: []const u8) ![
 
         // Add a Content-Type header (if one hasn't already been added)
         for (defn.headers.items) |hdr| {
-            var hdrator = std.mem.split(u8, hdr, ":");
-            if (std.ascii.eqlIgnoreCase(hdrator.first(), "Content-Type")) {
+            if (std.ascii.eqlIgnoreCase(headerName(hdr), "Content-Type")) {
                 break;
             }
         } else {
@@ -108,6 +107,11 @@ fn readAllDefinitionsAlloc(allocator: std.mem.Allocator, payload: []const u8) ![
     }
 
     return try definitions.toOwnedSlice();
+}
+
+fn headerName(hdr: []const u8) []const u8 {
+    var hdrator = std.mem.split(u8, hdr, ":");
+    return std.mem.trim(u8, hdrator.first(), &std.ascii.whitespace);
 }
 
 fn readDefinition(defn: *Definition, lines: *std.mem.SplitIterator(u8)) !void {
@@ -149,7 +153,16 @@ fn readDefinition(defn: *Definition, lines: *std.mem.SplitIterator(u8)) !void {
 
         // Or perhaps it's a header definition...
         if (std.mem.indexOfScalar(u8, trimmed, ':') != null) {
-            try defn.headers.append(trimmed);
+
+            // If a Location header is provided and its suffix is the
+            // definition uri, we won't return it directly.
+
+            if (std.ascii.eqlIgnoreCase(headerName(trimmed), "Location") and std.mem.endsWith(u8, trimmed, defn.uri)) {
+                defn.location_prefix = trimmed[0 .. trimmed.len - defn.uri.len];
+                std.debug.print("sss {s}\n", .{defn.location_prefix.?});
+            } else {
+                try defn.headers.append(trimmed);
+            }
             continue;
         }
 

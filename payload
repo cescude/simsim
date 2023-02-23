@@ -64,10 +64,10 @@ TEXT
 307 Temporary Redirect
 Location: http://localhost:3131/rand
 
-/redirect/api/*/get
+/redirect/api/**/get
 307 Temporary Redirect
-Location: http://localhost:8000/redirect/api/*/get
+Location: http://localhost:8000/redirect/api/**/get
 
 /redirect/**
 307 Temporary Redirect
-Location: http://localhost:8000/v1/redirect/wildcard/**
+Location: http://localhost:8000/extra/redirect/**

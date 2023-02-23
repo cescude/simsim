@@ -98,37 +98,13 @@ fn handleHttpRequest(conn: *c.mg_connection, msg: *c.mg_http_message, payloads: 
         }
 
         for (defn.headers.items) |hdr| {
+            _ = c.mg_printf(conn, "%.*s\r\n", hdr.len, hdr.ptr);
+        }
 
-            // OK, if a Location header has been provided, *and* the
-            // tail of the redirect matches the requested uri, use the
-            // requested uri for the tail. This is really only useful
-            // for wildcard uri definitions. Some examples:
-            //
-            // Changes https://example.com/abc/def to
-            // https://example.com/abc/def (ie., it does nothing)
-            //
-            //     /abc/def
-            //     Location: https://example.com/abc/def
-            //
-            // If "curl localhost:3131/xyz/def", then this sets the
-            // location header to https://example.com/xyz/def
-            //
-            //     /*/def
-            //     Location: https://example.com/*/def
-            //
-            // If "curl localhost:3131/abc/def/ghi", then this sets
-            // the location header to
-            // https://example.com:4433/v1/abc/def/ghi
-            //
-            //    /abc/**
-            //    Location: https://example.com:4433/v1/abc/**
-
-            if (std.ascii.startsWithIgnoreCase(hdr, "Location") and std.mem.endsWith(u8, hdr, defn.uri)) {
-                const hdr_prefix = hdr[0 .. hdr.len - defn.uri.len];
-                _ = c.mg_printf(conn, "%.*s%.*s\r\n", hdr_prefix.len, hdr_prefix.ptr, msg.uri.len, msg.uri.ptr);
-            } else {
-                _ = c.mg_printf(conn, "%.*s\r\n", hdr.len, hdr.ptr);
-            }
+        // If the location header is provided as a prefix, we should
+        // append the requested path.
+        if (defn.location_prefix) |location_prefix| {
+            _ = c.mg_printf(conn, "%.*s%.*s\r\n", location_prefix.len, location_prefix.ptr, msg.uri.len, msg.uri.ptr);
         }
 
         _ = c.mg_printf(conn, "Content-Length: %d\r\n\r\n%.*s", defn.body.len, defn.body.len, defn.body.ptr);
