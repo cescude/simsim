@@ -49,7 +49,7 @@ pub fn main() !void {
     var payloads = try std.heap.page_allocator.alloc(Payload, files.len);
     defer std.heap.page_allocator.free(payloads);
 
-    for (files) |file_name, i| {
+    for (files, 0..) |file_name, i| {
         payloads[i] = try Payload.init(std.heap.page_allocator, file_name);
     }
     defer {

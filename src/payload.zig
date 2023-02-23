@@ -246,7 +246,7 @@ pub fn findDefinition(self: Payload, msg: c.mg_http_message) !?struct { Definiti
 }
 
 fn findDefinitionInArray(defns: []const Definition, lua: Lua, msg: c.mg_http_message) !?struct { Definition, usize } {
-    for (defns) |defn, idx| {
+    for (defns, 0..) |defn, idx| {
         if (try defn.match(lua, msg)) {
             return .{ defn, idx };
         }
@@ -303,7 +303,7 @@ fn verifyTestCases(allocator: std.mem.Allocator, payload: []const u8, cases: []T
     var lua = try Lua.init(allocator);
     defer lua.deinit();
 
-    for (cases) |case, idx| {
+    for (cases, 0..) |case, idx| {
         if (try findDefinitionInArray(defns, lua, case[0])) |tup| {
             const defn = tup[0];
             try std.testing.expectEqualSlices(u8, case[1], defn.body);

@@ -104,7 +104,7 @@ fn joinedEnumVals(comptime C: type) *const [joinedEnumSpace(C)]u8 {
         joined[offset] = '(';
         offset += 1;
 
-        for (names) |name, idx| {
+        for (names, 0..) |name, idx| {
             if (idx > 0) {
                 joined[offset] = '|';
                 offset += 1;
