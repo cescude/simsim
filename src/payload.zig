@@ -159,7 +159,6 @@ fn readDefinition(defn: *Definition, lines: *std.mem.SplitIterator(u8)) !void {
 
             if (std.ascii.eqlIgnoreCase(headerName(trimmed), "Location") and std.mem.endsWith(u8, trimmed, defn.uri)) {
                 defn.location_prefix = trimmed[0 .. trimmed.len - defn.uri.len];
-                std.debug.print("sss {s}\n", .{defn.location_prefix.?});
             } else {
                 try defn.headers.append(trimmed);
             }
