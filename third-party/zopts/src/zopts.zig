@@ -365,7 +365,10 @@ const Action = enum {
 pub fn parseSlice(self: *ZOpts, argv: []const []const u8) Error!void {
     var no_more_flags = false;
     var num_positionals: usize = 0;
-    var extras_start_idx: usize = 0;
+
+    // We may already have values on this list; need to ensure we
+    // don't pick them up by accident.
+    var extras_start_idx: usize = self.values.items.len;
 
     var idx: usize = 0;
     while (idx < argv.len) : (idx += 1) {
@@ -374,44 +377,48 @@ pub fn parseSlice(self: *ZOpts, argv: []const []const u8) Error!void {
         if (no_more_flags) {
             try self.addPositional(token, num_positionals); // TODO: needs test case
             num_positionals += 1;
-        } else {
-            if (std.mem.eql(u8, token, "--")) {
-                no_more_flags = true; // TODO: needs test case
-            } else if (std.mem.startsWith(u8, token, "--")) {
-                const action = try self.fillLongValue(token[2..], argv[idx + 1 ..]);
-                switch (action) {
-                    .AdvanceOneCharacter => unreachable,
-                    .ContinueToNextToken => {},
-                    .SkipNextToken => idx += 1, // we used argv[idx+1] for the value
-                }
-            } else if (std.mem.eql(u8, token, "-")) {
-                try self.addPositional(token, num_positionals); // TODO: needs test case
-                num_positionals += 1;
-                no_more_flags = true;
-            } else if (std.mem.startsWith(u8, token, "-")) {
-
-                // Pull out all short flags from the token
-                token = token[1..];
-                shortloop: while (token.len > 0) {
-                    const action = try self.fillShortValue(token, argv[idx + 1 ..]);
-                    switch (action) {
-                        .AdvanceOneCharacter => token = token[1..], // go to the next short flag
-                        .ContinueToNextToken => {
-                            break :shortloop;
-                        },
-                        .SkipNextToken => {
-                            idx += 1;
-                            break :shortloop;
-                        },
-                    }
-                }
-            } else {
-                try self.addPositional(token, num_positionals); // TODO: needs test case
-                num_positionals += 1;
-                no_more_flags = true;
+        } else if (std.mem.eql(u8, token, "--")) {
+            no_more_flags = true; // TODO: needs test case
+        } else if (std.mem.startsWith(u8, token, "--")) {
+            const action = try self.fillLongValue(token[2..], argv[idx + 1 ..]);
+            switch (action) {
+                .AdvanceOneCharacter => unreachable,
+                .ContinueToNextToken => {},
+                .SkipNextToken => idx += 1, // we used argv[idx+1] for the value
             }
+        } else if (std.mem.eql(u8, token, "-")) {
+            try self.addPositional(token, num_positionals); // TODO: needs test case
+            num_positionals += 1;
+            no_more_flags = true;
+        } else if (std.mem.startsWith(u8, token, "-")) {
+
+            // Pull out all short flags from the token
+            token = token[1..];
+            shortloop: while (token.len > 0) {
+                const action = try self.fillShortValue(token, argv[idx + 1 ..]);
+                switch (action) {
+                    .AdvanceOneCharacter => token = token[1..], // go to the next short flag
+                    .ContinueToNextToken => {
+                        break :shortloop;
+                    },
+                    .SkipNextToken => {
+                        idx += 1;
+                        break :shortloop;
+                    },
+                }
+            }
+        } else {
+            try self.addPositional(token, num_positionals); // TODO: needs test case
+            num_positionals += 1;
+            no_more_flags = true;
         }
 
+        // Note to future me, this seems like a logic error, but it's correct!
+        //
+        // Because we loop through the entire argument list (to make sure
+        // everything is copied to the values array), at some point we switch
+        // from parsing "bound positional arguments" to "the extra junk at the
+        // end". When this flip happens, we want to mark the extras idx.
         if (num_positionals == self.arg_definitions.items.len) {
             extras_start_idx = self.values.items.len;
         }
@@ -984,12 +991,14 @@ test "Positional functionality" {
 
     var flag0: bool = false;
     var flag1: u16 = 0;
+    var flag2: []const u8 = "";
     var arg0: []const u8 = "";
     var arg1: ?u64 = null;
     var files: [][]const u8 = undefined;
 
     try args.flag(&flag0, .{ .name = "flag0" });
     try args.flag(&flag1, .{ .name = "flag1" });
+    try args.flag(&flag2, .{ .name = "flag2" });
     try args.arg(&arg0, .{});
     try args.arg(&arg1, .{});
     try args.extra(&files, .{});
@@ -1000,7 +1009,7 @@ test "Positional functionality" {
     try expect(arg1 == null);
     try expect(files.len == 0);
 
-    var argv = [_][]const u8{ "--flag0", "--flag1", "1234", "*.txt", "200000", "one.txt", "two.txt" };
+    var argv = [_][]const u8{ "--flag0", "--flag1", "1234", "--flag2", "value!", "*.txt", "200000", "one.txt", "two.txt" };
     try args.parseSlice(argv[0..]);
 
     try expect(flag0);
@@ -1010,6 +1019,39 @@ test "Positional functionality" {
     try expectEqual(@as(usize, 2), files.len);
     try expectEqualStrings("one.txt", files[0]);
     try expectEqualStrings("two.txt", files[1]);
+}
+
+test "String args don't impact extras" {
+    var args = ZOpts.init(std.testing.allocator);
+    defer args.deinit();
+
+    var flag0: []const u8 = "";
+    var extras: [][]const u8 = undefined;
+
+    try args.flag(&flag0, .{ .name = "flag0" });
+    try args.extra(&extras, .{});
+
+    var argv = [_][]const u8{ "--flag0=ok", "extra-one", "extra-two" };
+    try args.parseSlice(&argv);
+
+    try expectEqualStrings("ok", flag0);
+    try expectEqual(@as(usize, 2), extras.len);
+    try expectEqualStrings("extra-one", extras[0]);
+    try expectEqualStrings("extra-two", extras[1]);
+}
+
+test "Extra items on values doesn't impact extras" {
+    var args = ZOpts.init(std.testing.allocator);
+    defer args.deinit();
+
+    var extras: [][]const u8 = undefined;
+    try args.extra(&extras, .{});
+
+    try args.values.append(try std.testing.allocator.dupe(u8, "PROGRAM NAME"));
+
+    try args.parseSlice(&[_][]const u8{ "one", "two" });
+    try expectEqualStrings("one", extras[0]);
+    try expectEqualStrings("two", extras[1]);
 }
 
 test "Extras by themselves" {
